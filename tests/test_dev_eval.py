@@ -1,8 +1,8 @@
 import copy
 import unittest
 
-from case2 import build_scenario
-from dev_eval import check_sleep_rules, compare_request, matches_expectation
+from app.case2 import build_scenario
+from tools.dev_eval import check_sleep_rules, compare_request, matches_expectation
 
 
 class DevEvaluationTests(unittest.TestCase):

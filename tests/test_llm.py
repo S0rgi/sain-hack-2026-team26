@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
 
-from llm import Action, LLMClient, LLMError, Plan, validate_plan
+from app.llm import Action, LLMClient, LLMError, Plan, validate_plan
 
 
 class LLMTests(unittest.TestCase):
@@ -19,7 +19,7 @@ class LLMTests(unittest.TestCase):
                 validate_plan(Plan(outcome="done", reason="", actions=[action]), ["track_01"])
 
     @patch.dict("os.environ", {"LLM_PROVIDER": "google", "GEMINI_API_KEY": "test-key", "GEMINI_MODEL": "gemini-test"}, clear=True)
-    @patch("llm.urlopen")
+    @patch("app.llm.urlopen")
     def test_gemini_response_and_auth(self, urlopen):
         answer = {"outcome": "done", "reason": "", "actions": [{"device_id": "climate", "values": {"temperature_c": 21}}]}
         response = {"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": json.dumps(answer)}]}}]}
@@ -70,7 +70,7 @@ class LLMTests(unittest.TestCase):
         self.assertEqual(generate.call_count, 1)
 
     @patch.dict("os.environ", {"LLM_PROVIDER": "sain", "LLM_API_KEY": "test-key", "LLM_MODEL": "test-model", "LLM_BASE_URL": "https://example.test/v1"}, clear=True)
-    @patch("llm.urlopen")
+    @patch("app.llm.urlopen")
     def test_proxy_uses_chat_completion(self, urlopen):
         answer = {"outcome": "refused", "reason": "medical", "actions": []}
         response = {"choices": [{"finish_reason": "stop", "message": {"content": json.dumps(answer)}}]}
@@ -80,7 +80,7 @@ class LLMTests(unittest.TestCase):
         self.assertEqual(urlopen.call_args.args[0].full_url, "https://example.test/v1/chat/completions")
 
     @patch.dict("os.environ", {"LLM_PROVIDER": "google", "GEMINI_API_KEY": "test-key"}, clear=True)
-    @patch("llm.urlopen")
+    @patch("app.llm.urlopen")
     def test_http_errors_do_not_expose_credentials(self, urlopen):
         urlopen.side_effect = HTTPError("https://example.test", 401, "unauthorized", None, None)
         with self.assertRaises(LLMError) as error:

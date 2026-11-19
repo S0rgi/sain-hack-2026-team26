@@ -14,9 +14,9 @@ from fastapi import FastAPI, Header
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from case2 import build_scenario
-from llm import LLMClient, LLMError
-from room_client import RoomApiError, RoomClient, read_json
+from app.case2 import build_scenario
+from app.llm import LLMClient, LLMError
+from app.room_client import RoomApiError, RoomClient, read_json
 
 app = FastAPI(title="Sain team26")
 logger = logging.getLogger("uvicorn.error")
@@ -26,7 +26,7 @@ live_room = {}
 
 @app.get("/")
 def home():
-    return FileResponse(Path(__file__).with_name("index.html"))
+    return FileResponse(Path(__file__).parent / "static" / "index.html")
 
 
 @app.get("/health")

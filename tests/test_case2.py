@@ -2,9 +2,9 @@ import copy
 import unittest
 from unittest.mock import patch
 
-import main
-from case2 import build_scenario
-from llm import Action, Plan, Preferences
+from app import main
+from app.case2 import build_scenario
+from app.llm import Action, Plan, Preferences
 
 
 STATE = {
@@ -99,9 +99,9 @@ class Case2Tests(unittest.TestCase):
         self.assertFalse(any("Купил билет" in item for item in notes))
 
     @patch.dict("os.environ", {"HACK_API_URL": "https://example.test"})
-    @patch("main.RoomClient", FakeRoom)
-    @patch("main.LLMClient", FakeLLM)
-    @patch("main.fetch_dataset")
+    @patch("app.main.RoomClient", FakeRoom)
+    @patch("app.main.LLMClient", FakeLLM)
+    @patch("app.main.fetch_dataset")
     def test_run_reuses_compact_memory_for_request(self, fetch):
         request = {"record_id": "req1", "user_id": "u1", "at": STAY["check_in_at"], "utterances": [{"at": STAY["check_in_at"], "text": "Разбуди в семь"}]}
         fetch.return_value = {"users": [USER], "stays": [STAY], "requests": [request], "events": [], "chat_history": []}
@@ -133,9 +133,9 @@ class Case2Tests(unittest.TestCase):
         self.assertEqual(llm.histories[1][1]["actions"][0]["values"]["at"], "2026-11-13T07:00:00+03:00")
 
     @patch.dict("os.environ", {"HACK_API_URL": "https://example.test"})
-    @patch("main.RoomClient", FakeRoom)
-    @patch("main.LLMClient", FakeLLM)
-    @patch("main.fetch_dataset")
+    @patch("app.main.RoomClient", FakeRoom)
+    @patch("app.main.LLMClient", FakeLLM)
+    @patch("app.main.fetch_dataset")
     def test_run_and_interactive_alarm(self, fetch):
         fetch.return_value = {"users": [USER], "stays": [STAY], "requests": [], "events": [], "chat_history": []}
         result = main.run(main.RunRequest(case=2, dataset_code="dev"), authorization="Bearer test")

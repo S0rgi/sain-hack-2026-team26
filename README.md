@@ -13,6 +13,13 @@
 ## Журнал решений
 1. **16.11 — Старт проекта:** Инициализация репозитория и распределение ролей.
 
+## Структура проекта
+
+- `app/` — сервер, работа с LLM и симулятором, расчёт сценария.
+- `app/static/` — страница интерфейса.
+- `tools/` — запуск и сверка dev-набора.
+- `tests/` — локальные тесты с имитацией внешних сервисов.
+- `start.sh`, `requirements.txt`, `Dockerfile`, `compose.yaml` — запуск и развёртывание.
 ## Локальный запуск первого прототипа
 
 Нужны Python 3.11, доступ к API хакатона и выданный команде файл `api.token`. Значения токенов остаются вне репозитория.
@@ -22,7 +29,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 $env:HACK_API_URL = 'https://hack-api.be-healthy.tech'
-uvicorn main:app --host 127.0.0.1 --port 8000
+uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 В другом окне PowerShell, с активированным окружением, задайте переменные и создайте dev-прогон. Путь к токену укажите из выданного набора.
@@ -30,14 +37,14 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 ```powershell
 $env:HACK_API_URL = 'https://hack-api.be-healthy.tech'
 $env:HACK_TEAM_TOKEN = (Get-Content -Raw '<путь к api.token>').Trim()
-python dev_run.py
+python -m tools.dev_run
 ```
 
-После обработки откройте `http://127.0.0.1:8000`. `dev_run.py` создаёт dev-прогон через `/runs`, передаёт его токен в локальный `/run` и выводит число обработанных записей. При повторном запуске создаётся новый прогон, к которому могут применяться ограничения организаторов.
+После обработки откройте `http://127.0.0.1:8000`. `tools/dev_run.py` создаёт dev-прогон через `/runs`, передаёт его токен в локальный `/run` и выводит число обработанных записей. При повторном запуске создаётся новый прогон, к которому могут применяться ограничения организаторов.
 
 Приложение использует LLM для интерпретации просьб и извлечения предпочтений из профиля и истории. Полная проверка намерений и правил сна на эталоне ещё необходима. Экран использует сеанс заезда в виртуальное время заселения. Совместимость интерактивных действий с финальным прогоном пока не подтверждена.
 
-Для проверок выполните `python -m unittest -v test_llm test_case2 test_room_client test_dev_eval`. Эти тесты используют имитацию API и не заменяют проверку на реальном стенде.
+Для проверок выполните `python -m unittest discover -s tests -v`. Эти тесты используют имитацию API и не заменяют проверку на реальном стенде.
 
 
 
@@ -61,7 +68,7 @@ docker compose up -d --build
 
 ```bash
 export HACK_TEAM_TOKEN="$(tr -d '\r\n' < '/путь/к/api.token')"
-docker compose exec -e HACK_TEAM_TOKEN app python dev_run.py --evaluate
+docker compose exec -e HACK_TEAM_TOKEN app python -m tools.dev_run --evaluate
 unset HACK_TEAM_TOKEN
 ```
 
@@ -69,7 +76,7 @@ unset HACK_TEAM_TOKEN
 
 ```powershell
 $env:HACK_TEAM_TOKEN = (Get-Content -Raw '<путь к api.token>').Trim()
-docker compose exec -e HACK_TEAM_TOKEN app python dev_run.py --evaluate
+docker compose exec -e HACK_TEAM_TOKEN app python -m tools.dev_run --evaluate
 Remove-Item Env:HACK_TEAM_TOKEN
 ```
 

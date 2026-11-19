@@ -3,11 +3,11 @@ import json
 import unittest
 from unittest.mock import patch
 
-from room_client import RoomClient
+from app.room_client import RoomClient
 
 
 class RoomClientTests(unittest.TestCase):
-    @patch("room_client.urlopen")
+    @patch("app.room_client.urlopen")
     def test_action_uses_run_token_and_contract(self, urlopen):
         response = io.BytesIO(b'{"ok": true}')
         urlopen.return_value.__enter__.return_value = response
@@ -23,7 +23,7 @@ class RoomClientTests(unittest.TestCase):
         })
         self.assertEqual(result, {"ok": True})
 
-    @patch("room_client.urlopen")
+    @patch("app.room_client.urlopen")
     def test_state_encodes_timezone_offset(self, urlopen):
         urlopen.return_value.__enter__.return_value = io.BytesIO(b"{}")
         client = RoomClient("https://example.test", "run-token")

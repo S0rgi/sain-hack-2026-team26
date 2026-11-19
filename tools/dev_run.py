@@ -7,8 +7,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from dev_eval import evaluate_requests, evaluate_stays, print_report, print_sleep_report
-from room_client import RoomClient, read_json
+from tools.dev_eval import evaluate_requests, evaluate_stays, print_report, print_sleep_report
+from app.room_client import RoomClient, read_json
 
 
 def post(url, token, payload):
