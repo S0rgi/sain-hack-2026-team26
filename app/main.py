@@ -1,14 +1,16 @@
 """Сервис команды для обработки набора кейса 2 и показа номера."""
 
 import copy
+import json
 import logging
 import os
 import re
 from pathlib import Path
+from datetime import datetime, timezone
 from threading import Lock
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request
+from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, Header
 from fastapi.responses import FileResponse, JSONResponse
@@ -145,7 +147,6 @@ def run(req: RunRequest, authorization: str | None = Header(default=None)):
             if user_id in histories and message.get("role") in ("user", "agent") and isinstance(message.get("text"), str):
                 histories[user_id].append({"role": message["role"], "text": message["text"]})
         answers = {"stays": [], "requests": []}
-        prepared_live = None
         for stay in dataset["stays"]:
             stage = "построение сценария заезда"
             user = users[stay["user_id"]]
@@ -154,7 +155,6 @@ def run(req: RunRequest, authorization: str | None = Header(default=None)):
             if stay["user_id"] not in preferences_by_user:
                 preferences_by_user[stay["user_id"]] = llm.preferences(user, notes, track_ids, tracks)
             preferences = preferences_by_user[stay["user_id"]]
-            room_notes = [preferences.room_memory] if preferences.room_memory else []
             scenario_user = copy.deepcopy(user)
             sleep = scenario_user["sleep_preferences"] = dict(scenario_user.get("sleep_preferences") or {})
             sleep["temperature"] = preferences.temperature
@@ -169,11 +169,6 @@ def run(req: RunRequest, authorization: str | None = Header(default=None)):
             stage = "загрузка сценария"
             client.set_scenario(session["session_id"], scenario)
             answers["stays"].append({"record_id": stay["record_id"], "session_id": session["session_id"]})
-            prepared_live = {
-                "client": client, "session_id": session["session_id"], "at": stay["check_in_at"],
-                "scenario": scenario, "llm": llm, "user": scenario_user, "notes": room_notes,
-                "track_ids": track_ids, "history": histories[stay["user_id"]],
-            }
         for request in dataset["requests"]:
             stage = "обработка просьбы"
             user_id = request["user_id"]
@@ -182,10 +177,6 @@ def run(req: RunRequest, authorization: str | None = Header(default=None)):
                 [preferences_by_user[user_id].room_memory] if preferences_by_user[user_id].room_memory else [],
                 track_ids,
             ))
-        with room_lock:
-            live_room.clear()
-            if prepared_live:
-                live_room.update(prepared_live)
         if hasattr(llm, "usage"):
             logger.info(
                 "LLM provider=%s calls=%d input_tokens=%d output_tokens=%d total_tokens=%d missing_usage=%d",
@@ -201,15 +192,75 @@ def run(req: RunRequest, authorization: str | None = Header(default=None)):
         return JSONResponse(status_code=502, content={"error": "Не удалось обработать набор или связаться с симулятором"})
 
 
+def create_demo():
+    base_url = os.environ.get("HACK_API_URL")
+    token = os.environ.get("HACK_TEAM_TOKEN", "").strip()
+    if not base_url or not token:
+        raise ValueError("Для демонстрации задайте HACK_API_URL и HACK_TEAM_TOKEN на сервере")
+    request = Request(
+        base_url.rstrip("/") + "/runs", data=json.dumps({"case": 2}).encode(),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, method="POST",
+    )
+    # Do not retry creating a run: a lost response may still have created it.
+    with urlopen(request, timeout=30) as response:
+        run_info = json.load(response)
+    dataset = fetch_dataset(base_url, run_info["dataset_id"], f"Bearer {token}")
+    stay = dataset["stays"][0]
+    user = next(user for user in dataset["users"] if user["user_id"] == stay["user_id"])
+    notes = notes_for(dataset, stay["user_id"])
+    track_ids = [track["track_id"] for track in dataset.get("tracks", [])]
+    scenario = build_scenario(stay, user, notes)
+    client = RoomClient(base_url, token)
+    session = client.open_session(stay["record_id"], "stay", run_info["run_id"])
+    client.set_scenario(session["session_id"], scenario)
+    return {
+        "client": client, "session_id": session["session_id"], "at": stay["check_in_at"],
+        "check_in": stay["check_in_at"], "wake": stay["target_wake_at"],
+        "expires_at": run_info["expires_at"], "scenario": scenario, "user": user,
+        "notes": notes, "track_ids": track_ids, "history": [],
+    }
+
+
+def ensure_demo():
+    if not live_room or datetime.fromisoformat(live_room["expires_at"]) <= datetime.now(timezone.utc):
+        prepared = create_demo()
+        live_room.clear()
+        live_room.update(prepared)
+
+
+def demo_view(at=None):
+    ensure_demo()
+    if at is not None:
+        selected = datetime.fromisoformat(at)
+        if selected.tzinfo is None or not (datetime.fromisoformat(live_room["check_in"]) <= selected <= datetime.fromisoformat(live_room["wake"])):
+            raise ValueError("Выберите время между заселением и пробуждением с часовым поясом номера")
+        live_room["at"] = selected.isoformat(timespec="seconds")
+    state = live_room["client"].state(live_room["session_id"], live_room["at"])["state"]
+    return {"state": state, "scenario": live_room["scenario"], "at": live_room["at"],
+            "check_in": live_room["check_in"], "wake": live_room["wake"], "expires_at": live_room["expires_at"]}
+
+
+@app.post("/api/demo")
+def start_demo():
+    with room_lock:
+        try:
+            return demo_view()
+        except ValueError as exc:
+            return JSONResponse(status_code=503, content={"error": str(exc)})
+        except (HTTPError, RoomApiError, URLError, TimeoutError, OSError, KeyError, IndexError, StopIteration):
+            return JSONResponse(status_code=502, content={"error": "Не удалось подготовить демонстрационный номер"})
+
+
 @app.get("/api/room")
-def room():
+def room(at: str | None = None):
     with room_lock:
         if not live_room:
-            return JSONResponse(status_code=503, content={"error": "Ожидаем заселение"})
+            return JSONResponse(status_code=503, content={"error": "Сначала подготовьте демонстрационный номер"})
         try:
-            state = live_room["client"].state(live_room["session_id"], live_room["at"])["state"]
-            return {"state": state, "scenario": live_room["scenario"]}
-        except (RoomApiError, URLError, TimeoutError, OSError):
+            return demo_view(at)
+        except ValueError as exc:
+            return JSONResponse(status_code=400, content={"error": str(exc)})
+        except (HTTPError, RoomApiError, URLError, TimeoutError, OSError, KeyError, IndexError, StopIteration):
             return JSONResponse(status_code=502, content={"error": "Не удалось получить состояние номера"})
 
 
@@ -217,18 +268,19 @@ def room():
 def message(message: Message):
     with room_lock:
         if not live_room:
-            return JSONResponse(status_code=503, content={"error": "Ожидаем заселение"})
+            return JSONResponse(status_code=503, content={"error": "Сначала подготовьте демонстрационный номер"})
         try:
+            ensure_demo()
             client = live_room["client"]
             session_id = live_room["session_id"]
             at = live_room["at"]
             state = client.state(session_id, at)["state"]
             history = live_room["history"]
             state, _, reply, actions = execute_message(
-                client, session_id, state, at, message.text, live_room["llm"], history,
+                client, session_id, state, at, message.text, LLMClient(), history,
                 live_room["user"], live_room["notes"], live_room["track_ids"], at,
             )
             history.extend([{"role": "user", "text": message.text}, {"role": "agent", "text": reply, "actions": actions}])
             return {"reply": reply, "state": state}
-        except (RoomApiError, LLMError, URLError, TimeoutError, OSError):
+        except (HTTPError, RoomApiError, LLMError, URLError, TimeoutError, OSError, ValueError, KeyError, IndexError, StopIteration):
             return JSONResponse(status_code=502, content={"error": "Не удалось выполнить просьбу в симуляторе"})

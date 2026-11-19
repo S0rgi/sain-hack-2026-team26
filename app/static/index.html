@@ -33,6 +33,9 @@
     .step:last-child { border: 0; }
     .step time { color: #56725d; font-weight: 700; min-width: 48px; }
     #status { color: #895339; }
+    .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 18px 0; }
+    .controls button { min-height: 46px; }
+    .controls input { flex: initial; }
     @media(max-width:700px) { main { padding: 28px 18px; } header { margin-bottom: 36px; } .layout { grid-template-columns: 1fr; } .schedule { grid-column: auto; } }
   </style>
 </head>
@@ -42,6 +45,7 @@
   <h1>Ваш номер готов к отдыху</h1>
   <p>Настройки номера подстроены под ваш вечер и утро.</p>
   <p id="status" role="status"></p>
+  <div class="controls"><button id="start-demo" type="button">Подготовить номер</button><label for="virtual-time">Время в номере</label><input id="virtual-time" type="datetime-local" step="60" disabled><button id="apply-time" type="button" disabled>Показать</button></div>
   <div class="layout">
     <section><h2>Сейчас в номере</h2><div class="devices" id="devices"></div></section>
     <section><h2>Попросите номер</h2><div id="history"><div class="bubble">Здравствуйте! Что изменить в номере?</div></div><form id="form"><input id="text" placeholder="Например, сделай прохладнее" aria-label="Ваша просьба" required><button>Отправить</button></form></section>
@@ -51,12 +55,16 @@
 <script>
 const labels = {light:'Свет', climate:'Климат', sound:'Звук', curtains:'Шторы', alarm:'Будильник', dnd:'Не беспокоить'};
 const fields = {brightness:'Яркость', color_temperature_k:'Свет', temperature_c:'Температура', volume:'Громкость', timer_minutes:'Таймер, мин', track_id:'Звук', position:'Открытие', at:'Время', mode:'Режим', window_minutes:'Окно, мин', enabled:'Режим'};
-function value(key, val) { if (val === null) return 'выключен'; if (typeof val === 'boolean') return val ? 'включён' : 'выключен'; if (key === 'at') return new Date(val).toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'}); if (key === 'temperature_c') return val + ' °C'; if (['brightness','position','volume'].includes(key)) return val + '%'; return String(val); }
+function value(key, val) { if (val === null) return 'выключен'; if (typeof val === 'boolean') return val ? 'включён' : 'выключен'; if (key === 'at') return String(val).slice(11,16); if (key === 'temperature_c') return val + ' °C'; if (['brightness','position','volume'].includes(key)) return val + '%'; return String(val); }
 function settings(data) { return Object.entries(data).map(([k,v]) => `${fields[k] || k}: ${value(k,v)}`).join(' · '); }
 function renderState(state) { const root = document.querySelector('#devices'); root.replaceChildren(); for (const [id,values] of Object.entries(state)) { const el = document.createElement('div'); el.className = 'device'; const title = document.createElement('small'); title.textContent = labels[id] || id; const desc = document.createElement('strong'); desc.textContent = settings(values); el.append(title,desc); root.append(el); } }
-function renderSchedule(steps) { const root = document.querySelector('#schedule'); root.replaceChildren(); for (const step of steps) { const row = document.createElement('div'); row.className = 'step'; const t = document.createElement('time'); t.textContent = new Date(step.at).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}); const desc = document.createElement('span'); desc.textContent = `${labels[step.device_id] || step.device_id} · ${settings(step.values)}`; row.append(t,desc); root.append(row); } }
+function renderSchedule(steps) { const root = document.querySelector('#schedule'); root.replaceChildren(); for (const step of steps) { const row = document.createElement('div'); row.className = 'step'; const t = document.createElement('time'); t.textContent = step.at.slice(11,16); const desc = document.createElement('span'); desc.textContent = `${labels[step.device_id] || step.device_id} · ${settings(step.values)}`; row.append(t,desc); root.append(row); } }
 function bubble(text, guest=false) { const el = document.createElement('div'); el.className = 'bubble' + (guest ? ' guest' : ''); el.textContent = text; const history = document.querySelector('#history'); history.append(el); history.scrollTop = history.scrollHeight; }
-async function load() { try { const response = await fetch('/api/room'); const data = await response.json(); if (!response.ok) throw Error(data.error); renderState(data.state); renderSchedule(data.scenario); document.querySelector('#status').textContent = ''; } catch (error) { document.querySelector('#status').textContent = error.message; } }
+let roomOffset = '';
+function renderRoom(data) { renderState(data.state); renderSchedule(data.scenario); const input = document.querySelector('#virtual-time'); roomOffset = data.at.slice(-6); input.value = data.at.slice(0,16); input.min = data.check_in.slice(0,16); input.max = data.wake.slice(0,16); input.disabled = false; document.querySelector('#apply-time').disabled = false; document.querySelector('#status').textContent = 'Время указано в часовом поясе номера (' + roomOffset + ').'; }
+async function load(url='/api/room', options={}) { try { const response = await fetch(url, options); const data = await response.json(); if (!response.ok) throw Error(data.error); renderRoom(data); } catch (error) { document.querySelector('#status').textContent = error.message; } }
+document.querySelector('#start-demo').addEventListener('click', async event => { event.target.disabled = true; try { await load('/api/demo', {method:'POST'}); } finally { event.target.disabled = false; } });
+document.querySelector('#apply-time').addEventListener('click', () => { const input = document.querySelector('#virtual-time'); if (!input.reportValidity()) return; load('/api/room?at=' + encodeURIComponent(input.value + ':00' + roomOffset)); });
 document.querySelector('#form').addEventListener('submit', async event => { event.preventDefault(); const input = document.querySelector('#text'); const text = input.value.trim(); if (!text) return; input.value = ''; bubble(text,true); const button = event.target.querySelector('button'); button.disabled = true; try { const response = await fetch('/api/message',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})}); const data = await response.json(); if (!response.ok) throw Error(data.error); bubble(data.reply); renderState(data.state); } catch(error) { bubble(error.message); } finally { button.disabled = false; input.focus(); } });
 load();
 </script>

@@ -42,8 +42,11 @@ class RoomClient:
         except HTTPError as exc:
             raise RoomApiError(f"Симулятор ответил HTTP {exc.code}") from exc
 
-    def open_session(self, record_id: str, kind: str):
-        return self._request("POST", "/room/session", {"record_id": record_id, "kind": kind}, attempts=3)
+    def open_session(self, record_id: str, kind: str, run_id: str | None = None):
+        body = {"record_id": record_id, "kind": kind}
+        if run_id is not None:
+            body["run_id"] = run_id
+        return self._request("POST", "/room/session", body, attempts=3)
 
     def devices(self):
         return self._request("GET", "/room/devices")

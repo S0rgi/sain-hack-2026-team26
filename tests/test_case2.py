@@ -24,7 +24,7 @@ class FakeRoom:
         self.state_data = copy.deepcopy(STATE)
         self.calls = []
 
-    def open_session(self, record_id, kind):
+    def open_session(self, record_id, kind, run_id=None):
         return {"session_id": record_id, "initial_state": copy.deepcopy(STATE)}
 
     def set_scenario(self, session_id, steps):
@@ -100,13 +100,14 @@ class Case2Tests(unittest.TestCase):
 
     @patch.dict("os.environ", {"HACK_API_URL": "https://example.test"})
     @patch("app.main.RoomClient", FakeRoom)
-    @patch("app.main.LLMClient", FakeLLM)
+    @patch("app.main.LLMClient")
     @patch("app.main.fetch_dataset")
-    def test_run_reuses_compact_memory_for_request(self, fetch):
+    def test_run_reuses_compact_memory_for_request(self, fetch, llm_factory):
+        llm = llm_factory.return_value = FakeLLM()
         request = {"record_id": "req1", "user_id": "u1", "at": STAY["check_in_at"], "utterances": [{"at": STAY["check_in_at"], "text": "Разбуди в семь"}]}
         fetch.return_value = {"users": [USER], "stays": [STAY], "requests": [request], "events": [], "chat_history": []}
         main.run(main.RunRequest(case=2, dataset_code="dev"), authorization="Bearer test")
-        self.assertEqual(main.live_room["llm"].note_inputs[0], ["гость предпочитает тёплый свет"])
+        self.assertEqual(llm.note_inputs[0], ["гость предпочитает тёплый свет"])
 
     def test_two_utterances_are_one_request(self):
         client, llm, history = FakeRoom("", ""), FakeLLM(), []
@@ -138,8 +139,13 @@ class Case2Tests(unittest.TestCase):
     @patch("app.main.fetch_dataset")
     def test_run_and_interactive_alarm(self, fetch):
         fetch.return_value = {"users": [USER], "stays": [STAY], "requests": [], "events": [], "chat_history": []}
+        main.live_room.clear()
         result = main.run(main.RunRequest(case=2, dataset_code="dev"), authorization="Bearer test")
         self.assertEqual(result["stays"][0]["record_id"], "stay1")
+        self.assertEqual(main.live_room, {})
+        main.live_room.update({"client": FakeRoom('', ''), "session_id": "demo", "at": STAY["check_in_at"],
+                               "expires_at": "2099-01-01T00:00:00+00:00", "history": [], "user": USER,
+                               "notes": [], "track_ids": []})
         first = main.message(main.Message(text="Разбуди в семь"))
         self.assertEqual(first["state"]["alarm"]["at"], "2026-11-13T07:00:00+03:00")
         second = main.message(main.Message(text="На полчаса позже"))
@@ -147,6 +153,7 @@ class Case2Tests(unittest.TestCase):
         refused = main.message(main.Message(text="Поставь 35 градусов"))
         self.assertEqual(refused["state"]["climate"]["temperature_c"], 20)
         self.assertIn("пределы", refused["reply"])
+        main.live_room.clear()
 
 
 if __name__ == "__main__":
