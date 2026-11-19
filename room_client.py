@@ -66,4 +66,4 @@ class RoomClient:
 
     def log(self, session_id: str):
         session = quote(session_id, safe="")
-        return self._request("GET", f"/room/{session}/log")
+        return self._request("GET", f"/room/{session}/log", attempts=3)

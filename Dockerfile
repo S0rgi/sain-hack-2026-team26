@@ -10,7 +10,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && useradd --uid 10001 --create-home app
 
-COPY main.py case2.py room_client.py dev_run.py index.html ./
+COPY main.py case2.py llm.py room_client.py dev_run.py dev_eval.py index.html ./
 
 USER app
 EXPOSE 8000
