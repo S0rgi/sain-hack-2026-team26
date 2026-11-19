@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Номер для отдыха</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=Instrument+Serif&display=swap');
+    :root { font-family: 'DM Sans', sans-serif; color: #26362f; background: #f3f2eb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { max-width: 1100px; margin: auto; padding: 44px 28px 80px; }
+    header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 48px; font-weight: 700; }
+    header span { font-weight: 400; color: #65766b; font-size: 14px; }
+    h1 { font: 400 clamp(42px, 6vw, 68px)/1.05 'Instrument Serif', Georgia, serif; margin: 0 0 12px; }
+    p { color: #66766d; line-height: 1.6; }
+    .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 36px; }
+    section { background: #fff; border-radius: 22px; padding: 28px; box-shadow: 0 8px 35px #384c3c0b; }
+    h2 { font-size: 18px; margin: 0 0 22px; }
+    .devices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .device { background: #f3f6f1; padding: 16px; border-radius: 14px; min-height: 78px; }
+    .device small { color: #718177; display: block; margin-bottom: 7px; }
+    .device strong { font-size: 16px; }
+    #history { min-height: 180px; max-height: 290px; overflow: auto; }
+    .bubble { background: #f1f5ef; border-radius: 14px; padding: 12px 15px; margin-bottom: 10px; line-height: 1.45; }
+    .guest { background: #dfeae0; margin-left: 36px; }
+    form { display: flex; gap: 8px; margin-top: 16px; }
+    input { min-width: 0; flex: 1; border: 1px solid #dce5dc; border-radius: 12px; padding: 14px; font: inherit; }
+    button { border: 0; border-radius: 12px; background: #385a46; color: white; padding: 0 19px; font: inherit; cursor: pointer; }
+    button:disabled { opacity: .5; }
+    .schedule { grid-column: 1/-1; }
+    .step { padding: 12px 0; border-bottom: 1px solid #edf0eb; display: flex; gap: 20px; }
+    .step:last-child { border: 0; }
+    .step time { color: #56725d; font-weight: 700; min-width: 48px; }
+    #status { color: #895339; }
+    @media(max-width:700px) { main { padding: 28px 18px; } header { margin-bottom: 36px; } .layout { grid-template-columns: 1fr; } .schedule { grid-column: auto; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>SAIN <span>Партнёрский отель сна</span></header>
+  <h1>Ваш номер готов к отдыху</h1>
+  <p>Настройки номера подстроены под ваш вечер и утро.</p>
+  <p id="status" role="status"></p>
+  <div class="layout">
+    <section><h2>Сейчас в номере</h2><div class="devices" id="devices"></div></section>
+    <section><h2>Попросите номер</h2><div id="history"><div class="bubble">Здравствуйте! Что изменить в номере?</div></div><form id="form"><input id="text" placeholder="Например, сделай прохладнее" aria-label="Ваша просьба" required><button>Отправить</button></form></section>
+    <section class="schedule"><h2>Ваш вечер и утро</h2><div id="schedule"></div></section>
+  </div>
+</main>
+<script>
+const labels = {light:'Свет', climate:'Климат', sound:'Звук', curtains:'Шторы', alarm:'Будильник', dnd:'Не беспокоить'};
+const fields = {brightness:'Яркость', color_temperature_k:'Свет', temperature_c:'Температура', volume:'Громкость', timer_minutes:'Таймер, мин', track_id:'Звук', position:'Открытие', at:'Время', mode:'Режим', window_minutes:'Окно, мин', enabled:'Режим'};
+function value(key, val) { if (val === null) return 'выключен'; if (typeof val === 'boolean') return val ? 'включён' : 'выключен'; if (key === 'at') return new Date(val).toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'}); if (key === 'temperature_c') return val + ' °C'; if (['brightness','position','volume'].includes(key)) return val + '%'; return String(val); }
+function settings(data) { return Object.entries(data).map(([k,v]) => `${fields[k] || k}: ${value(k,v)}`).join(' · '); }
+function renderState(state) { const root = document.querySelector('#devices'); root.replaceChildren(); for (const [id,values] of Object.entries(state)) { const el = document.createElement('div'); el.className = 'device'; const title = document.createElement('small'); title.textContent = labels[id] || id; const desc = document.createElement('strong'); desc.textContent = settings(values); el.append(title,desc); root.append(el); } }
+function renderSchedule(steps) { const root = document.querySelector('#schedule'); root.replaceChildren(); for (const step of steps) { const row = document.createElement('div'); row.className = 'step'; const t = document.createElement('time'); t.textContent = new Date(step.at).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}); const desc = document.createElement('span'); desc.textContent = `${labels[step.device_id] || step.device_id} · ${settings(step.values)}`; row.append(t,desc); root.append(row); } }
+function bubble(text, guest=false) { const el = document.createElement('div'); el.className = 'bubble' + (guest ? ' guest' : ''); el.textContent = text; const history = document.querySelector('#history'); history.append(el); history.scrollTop = history.scrollHeight; }
+async function load() { try { const response = await fetch('/api/room'); const data = await response.json(); if (!response.ok) throw Error(data.error); renderState(data.state); renderSchedule(data.scenario); document.querySelector('#status').textContent = ''; } catch (error) { document.querySelector('#status').textContent = error.message; } }
+document.querySelector('#form').addEventListener('submit', async event => { event.preventDefault(); const input = document.querySelector('#text'); const text = input.value.trim(); if (!text) return; input.value = ''; bubble(text,true); const button = event.target.querySelector('button'); button.disabled = true; try { const response = await fetch('/api/message',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})}); const data = await response.json(); if (!response.ok) throw Error(data.error); bubble(data.reply); renderState(data.state); } catch(error) { bubble(error.message); } finally { button.disabled = false; input.focus(); } });
+load();
+</script>
+</body>
+</html>
