@@ -6,7 +6,10 @@ services:
     environment:
       HACK_API_URL: ${HACK_API_URL:-https://hack-api.be-healthy.tech}
       HACK_TEAM_TOKEN: ${HACK_TEAM_TOKEN:-}
-      LLM_PROVIDER: ${LLM_PROVIDER:-sain}
+      LLM_PROVIDER: ${LLM_PROVIDER:-google}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
+      GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://gemini-proxy.ilyuxa-chernov-04.workers.dev}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-}

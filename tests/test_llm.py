@@ -18,12 +18,30 @@ class LLMTests(unittest.TestCase):
             with self.subTest(action=action), self.assertRaises(LLMError):
                 validate_plan(Plan(outcome="done", reason="", actions=[action]), ["track_01"])
 
-    @patch.dict("os.environ", {"LLM_PROVIDER": "google", "LLM_API_KEY": "test-key", "LLM_MODEL": "test-model", "LLM_BASE_URL": "https://example.test/v1"}, clear=True)
-    def test_other_providers_are_rejected(self):
+    @patch.dict("os.environ", {"LLM_PROVIDER": "google", "GEMINI_API_KEY": "test-key", "GEMINI_MODEL": "gemini-test"}, clear=True)
+    @patch("app.llm.urlopen")
+    def test_gemini_response_and_auth(self, urlopen):
+        answer = {"outcome": "done", "reason": "", "actions": [{"device_id": "climate", "values": {"temperature_c": 21}}]}
+        response = {"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": json.dumps(answer)}]}}]}
+        urlopen.return_value.__enter__.return_value = io.BytesIO(json.dumps(response).encode())
+        result = LLMClient().plan("теплее", {}, "2026-11-12T20:00:00+03:00", [], {}, [], [])
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.get_header("X-goog-api-key"), "test-key")
+        self.assertEqual(request.get_header("User-agent"), "SainTeam26/1.0")
+        self.assertEqual(request.full_url, "https://gemini-proxy.ilyuxa-chernov-04.workers.dev/v1beta/models/gemini-test:generateContent")
+        self.assertEqual(result.actions[0].values["temperature_c"], 21)
+        self.assertNotIn("test-key", request.full_url)
+
+    @patch.dict("os.environ", {"LLM_PROVIDER": "google", "GEMINI_API_KEY": "test-key", "GEMINI_BASE_URL": "https://example.test/"}, clear=True)
+    def test_google_base_url_is_configurable(self):
+        self.assertEqual(LLMClient().google_base_url, "https://example.test")
+
+    @patch.dict("os.environ", {"LLM_PROVIDER": "google", "GEMINI_API_KEY": "test-key", "GEMINI_BASE_URL": "http://example.test"}, clear=True)
+    def test_google_base_url_requires_https(self):
         with self.assertRaises(LLMError):
             LLMClient()
 
-    @patch.dict("os.environ", {"LLM_API_KEY": "test-key", "LLM_MODEL": "test-model", "LLM_BASE_URL": "https://example.test/v1"}, clear=True)
+    @patch.dict("os.environ", {"LLM_PROVIDER": "google", "GEMINI_API_KEY": "test-key"}, clear=True)
     def test_invalid_plan_is_retried_before_execution(self):
         invalid = Plan(outcome="done", reason="", actions=[Action(device_id="light", values={"enabled": True})])
         valid = Plan(outcome="done", reason="", actions=[Action(device_id="light", values={"brightness": 0})])
@@ -33,7 +51,7 @@ class LLMTests(unittest.TestCase):
         self.assertEqual(generate.call_count, 2)
         self.assertEqual(result.actions[0].values, {"brightness": 0})
 
-    @patch.dict("os.environ", {"LLM_API_KEY": "test-key", "LLM_MODEL": "test-model", "LLM_BASE_URL": "https://example.test/v1"}, clear=True)
+    @patch.dict("os.environ", {"LLM_PROVIDER": "google", "GEMINI_API_KEY": "test-key"}, clear=True)
     def test_persistently_invalid_plan_returns_refusal(self):
         invalid = Plan(outcome="done", reason="", actions=[Action(device_id="light", values={"enabled": True})])
         client = LLMClient()
@@ -43,7 +61,7 @@ class LLMTests(unittest.TestCase):
         self.assertEqual(result.outcome, "refused")
         self.assertEqual(result.actions, [])
 
-    @patch.dict("os.environ", {"LLM_API_KEY": "test-key", "LLM_MODEL": "test-model", "LLM_BASE_URL": "https://example.test/v1"}, clear=True)
+    @patch.dict("os.environ", {"LLM_PROVIDER": "google", "GEMINI_API_KEY": "test-key"}, clear=True)
     def test_service_error_is_not_treated_as_bad_model_output(self):
         client = LLMClient()
         with patch.object(client, "_generate", side_effect=LLMError("LLM HTTP 401")) as generate:
@@ -61,7 +79,7 @@ class LLMTests(unittest.TestCase):
         self.assertEqual(result.reason, "medical")
         self.assertEqual(urlopen.call_args.args[0].full_url, "https://example.test/v1/chat/completions")
 
-    @patch.dict("os.environ", {"LLM_API_KEY": "test-key", "LLM_MODEL": "test-model", "LLM_BASE_URL": "https://example.test/v1"}, clear=True)
+    @patch.dict("os.environ", {"LLM_PROVIDER": "google", "GEMINI_API_KEY": "test-key"}, clear=True)
     @patch("app.llm.urlopen")
     def test_http_errors_do_not_expose_credentials(self, urlopen):
         urlopen.side_effect = HTTPError("https://example.test", 401, "unauthorized", None, None)
