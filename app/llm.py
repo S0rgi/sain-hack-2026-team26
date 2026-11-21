@@ -48,11 +48,16 @@ class Plan(BaseModel):
     actions: list[Action] = Field(max_length=8)
 
 
+def configured_provider():
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+    return provider or ("sain" if os.getenv("LLM_BASE_URL") else "google")
+
+
 class LLMClient:
     def __init__(self):
         self.unavailable_until = 0.0
         self.usage = {"calls": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "missing_usage": 0}
-        self.provider = os.getenv("LLM_PROVIDER", "sain" if os.getenv("LLM_BASE_URL") else "google").lower()
+        self.provider = configured_provider()
         if self.provider == "google":
             self.key = os.getenv("GEMINI_API_KEY", "")
             self.model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")

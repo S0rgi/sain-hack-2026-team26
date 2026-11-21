@@ -224,6 +224,15 @@ dialog p { margin-top: 10px; color: var(--muted); }
   .timeline li { grid-template-columns: 65px minmax(0, 1fr); gap: 6px; }
   .home-recipe { margin-top: 29px; }
 }
+#main[data-ready] .intro { padding-block: 27px 23px; }
+#main[data-ready] h1 { font-size: clamp(37px, 4.8vw, 65px); }
+#main[data-ready] .intro p { margin-top: 11px; }
+#main[data-ready] .room-visual { min-height: clamp(225px, 27vw, 373px); }
+#main[data-ready] .concierge { min-height: clamp(360px, 41vw, 565px); }
+@media (min-width: 1120px) {
+  #main[data-ready] .intro br { display: none; }
+  #main[data-ready] .intro p { max-width: 70ch; }
+}
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   .room-photo { transition: none; }

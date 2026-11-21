@@ -12,6 +12,7 @@ let stage = "dev";
 let timelineKey = "";
 let timelineItems = [];
 let voiceAvailable = false;
+let demoAvailable = true;
 let recorder = null;
 let playback = null;
 
@@ -201,7 +202,7 @@ function renderControls() {
   const connection = byId("connection");
   connection.dataset.state = waiting ? "busy" : active ? "live" : "idle";
   connection.textContent = waiting ? "Обновляем номер" : active ? "Номер готов" : room ? "Заезд завершён" : "До заселения";
-  byId("check-in").hidden = !!room;
+  byId("check-in").hidden = !!room || !demoAvailable;
   byId("check-in").disabled = waiting;
   byId("reset").hidden = !room;
   byId("reset").disabled = waiting || !!recorder;
@@ -226,6 +227,7 @@ function renderControls() {
 function updateRoom(data, newStay = false) {
   const reloaded = room && room.expires_at !== data.expires_at;
   room = data;
+  byId("main").dataset.ready = "";
   if (newStay || reloaded) {
     timelineKey = "";
     byId("history").replaceChildren();
@@ -487,6 +489,11 @@ renderControls();
 Promise.allSettled([api("/api/config"), api("/api/room")]).then(([config, restored]) => {
   if (config.status === "fulfilled") {
     setStage(config.value.stage);
+    if (config.value.demo === false) {
+      showNotice("Общий номер отключён в настройках сервера.");
+      demoAvailable = false;
+      renderControls();
+    }
     voiceAvailable = !!config.value.voice;
     byId("voice").hidden = !(voiceAvailable && window.MediaRecorder && navigator.mediaDevices?.getUserMedia);
   }

@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 from urllib.request import Request
 
 from fastapi import FastAPI, Header
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -19,11 +20,16 @@ from pydantic import BaseModel, Field
 from app import demo
 from app.case2 import build_scenario
 from app.commands import fallback_plan, normalize, plan_command, plan_compound_command
-from app.llm import LLMClient, LLMError, validate_plan
+from app.llm import LLMClient, LLMError, configured_provider, validate_plan
+from app.product_api import build_router
 from app.room_client import RoomApiError, RoomClient, read_json
 from app.voice import router as voice_router, voice_enabled
 
 app = FastAPI(title="Artemisis")
+default_origins = "http://localhost:5173,http://127.0.0.1:5173"
+origins = [origin.strip() for origin in os.getenv("FRONTEND_ORIGINS", default_origins).split(",") if origin.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST"],
+                   allow_headers=["Authorization", "Content-Type", "X-Admin-Key"])
 static_dir = Path(__file__).parent / "static"
 app.mount("/assets", StaticFiles(directory=static_dir), name="assets")
 app.include_router(voice_router)
@@ -260,6 +266,13 @@ def run(req: RunRequest, authorization: str | None = Header(default=None)):
         return JSONResponse(status_code=502, content={"error": "Не удалось обработать набор или связаться с симулятором"})
 
 
+def create_product_session(record_id):
+    return demo.create_demo(notes_for, record_id=record_id, stage="dev")
+
+
+app.include_router(build_router(create_product_session, execute_message))
+
+
 class DemoReset(BaseModel):
     preserve_preferences: bool = False
 
@@ -283,7 +296,17 @@ def prepare_stay(saved=None):
     return view
 
 
+def legacy_demo_enabled():
+    return os.getenv("ENABLE_LEGACY_DEMO", "false").lower() == "true"
+
+
+def disabled_demo():
+    return JSONResponse(status_code=404, content={"error": "Общий номер для демонстрации отключён."})
+
+
 def stay_error(*, allow_checkout=False):
+    if not legacy_demo_enabled():
+        return disabled_demo()
     if not live_room:
         return JSONResponse(status_code=503, content={"error": "Сначала заселитесь в номер."})
     if demo.is_expired(live_room):
@@ -296,13 +319,15 @@ def stay_error(*, allow_checkout=False):
 @app.get("/api/config")
 def client_config():
     try:
-        return {"stage": demo.demo_stage(), "voice": voice_enabled()}
+        return {"stage": demo.demo_stage(), "voice": voice_enabled(), "demo": legacy_demo_enabled()}
     except demo.DemoConfigurationError as exc:
         return JSONResponse(status_code=503, content={"error": str(exc)})
 
 
 @app.post("/api/demo")
 def start_demo():
+    if not legacy_demo_enabled():
+        return disabled_demo()
     with room_lock:
         try:
             if not live_room or demo.is_expired(live_room):
@@ -316,6 +341,8 @@ def start_demo():
 
 @app.post("/api/demo/reset")
 def reset_demo(request: DemoReset):
+    if not legacy_demo_enabled():
+        return disabled_demo()
     with room_lock:
         try:
             saved = demo.saved_preferences(live_room) if request.preserve_preferences else None
@@ -358,8 +385,7 @@ def message(message: Message):
             at = live_room["at"]
             state = client.state(session_id, at)["state"]
             history = live_room["history"]
-            provider = os.environ.get("LLM_PROVIDER", "").lower()
-            llm = None if live_room["stage"] == "final" and provider != "sain" else LLMClient
+            llm = None if live_room["stage"] == "final" and configured_provider() != "sain" else LLMClient
             state, response_class, reply, actions = execute_message(
                 client, session_id, state, at, message.text, llm, history,
                 live_room["user"], live_room["notes"], live_room["track_ids"], at,

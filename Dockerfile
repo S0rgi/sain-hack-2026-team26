@@ -8,7 +8,8 @@ WORKDIR /app
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
-    && useradd --uid 10001 --create-home app
+    && useradd --uid 10001 --create-home app \
+    && mkdir -p /app/data && chown app:app /app/data
 
 COPY app ./app
 COPY tools ./tools

@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
-from app.llm import wait_for_sain_slot
+from app.llm import configured_provider, wait_for_sain_slot
 
 
 router = APIRouter(prefix="/api/voice")
@@ -45,7 +45,7 @@ class SpeechRequest(BaseModel):
 
 
 def _proxy_key():
-    if os.getenv("HACK_VOICE_ENABLED") != "1" or os.getenv("LLM_PROVIDER", "").lower() != "sain":
+    if os.getenv("HACK_VOICE_ENABLED") != "1" or configured_provider() != "sain":
         return None
     base_url = os.getenv("LLM_BASE_URL") or ORGANIZER_PROXY
     if base_url.rstrip("/") != ORGANIZER_PROXY:

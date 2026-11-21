@@ -35,12 +35,12 @@ def demo_stage():
     return stage
 
 
-def create_demo(notes_for, saved=None):
+def create_demo(notes_for, saved=None, *, record_id=None, stage=None):
     base_url = os.getenv("HACK_API_URL", "").rstrip("/")
     token = os.getenv("HACK_TEAM_TOKEN", "").strip()
     if not base_url or not token:
         raise DemoConfigurationError("Для заезда задайте HACK_API_URL и HACK_TEAM_TOKEN на сервере")
-    stage = demo_stage()
+    stage = stage or demo_stage()
     payload = {"case": 2, "stage": "final"} if stage == "final" else {"case": 2}
     request = Request(
         base_url + "/runs",
@@ -61,7 +61,9 @@ def create_demo(notes_for, saved=None):
         session_params = {"run_id": run_info["run_id"]}
     request = Request(base_url + "/case/2/getData" + query, headers={"Authorization": f"Bearer {token}"})
     dataset = read_json(request, timeout=30, attempts=3)["dataset"]
-    stay = dataset["stays"][0]
+    stay = next((stay for stay in dataset["stays"] if record_id is None or stay["record_id"] == record_id), None)
+    if stay is None:
+        raise ValueError("Заезд не найден в наборе")
     user = next(user for user in dataset["users"] if user["user_id"] == stay["user_id"])
     tracks = dataset.get("tracks") or []
     track_ids = [track["track_id"] for track in tracks]
@@ -74,6 +76,7 @@ def create_demo(notes_for, saved=None):
     )
     room = {
         "stage": stage,
+        "run_id": run_info["run_id"],
         "at": stay["check_in_at"],
         "check_in": stay["check_in_at"],
         "bedtime": bedtime,
@@ -223,11 +226,33 @@ def _next_alarm_at(room, previous):
     return None
 
 
+def _replayable_values(device, values):
+    values = dict(values)
+    if device == "light":
+        if "brightness" in values and not 10 <= values["brightness"] <= 30:
+            values.pop("brightness")
+        if values.get("color_temperature_k", 2700) > 2700:
+            values.pop("color_temperature_k")
+    elif device == "climate":
+        temperature = values.get("temperature_c")
+        if temperature is None or not any(low <= temperature <= low + 1 for low in (17, 19, 21)):
+            values.pop("temperature_c", None)
+    elif device == "sound":
+        if values.get("volume", 20) > 30:
+            values.pop("volume")
+        if not 1 <= values.get("timer_minutes", 45) <= 45:
+            values.pop("timer_minutes")
+    elif device == "alarm" and not values.get("at"):
+        # Acknowledging this morning's alarm must not prevent tomorrow's alarm.
+        values.pop("at", None)
+    return values
+
+
 def _apply_preferences(room, changes):
     applied = {}
     for step in _recipe_steps(room):
         device = step["device_id"]
-        values = dict(changes.get(device, {}))
+        values = _replayable_values(device, changes.get(device, {}))
         if device == "sound" and values.get("track_id") not in room["track_ids"]:
             values.pop("track_id", None)
         if device == "alarm" and values.get("at") is not None:

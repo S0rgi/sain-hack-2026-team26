@@ -229,7 +229,7 @@ class Case2Tests(unittest.TestCase):
         self.assertEqual(result[1], "done")
         self.assertEqual(result[0]["climate"]["temperature_c"], 22)
 
-    @patch.dict("os.environ", {"HACK_API_URL": "https://example.test"})
+    @patch.dict("os.environ", {"HACK_API_URL": "https://example.test", "ENABLE_LEGACY_DEMO": "true"})
     @patch("app.main.RoomClient", FakeRoom)
     @patch("app.main.LLMClient", FakeLLM)
     @patch("app.main.fetch_dataset")

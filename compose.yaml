@@ -10,10 +10,20 @@ services:
       HACK_VOICE_ENABLED: ${HACK_VOICE_ENABLED:-0}
       HACK_STT_MODEL: ${HACK_STT_MODEL:-gpt-transcribe}
       HACK_TTS_MODEL: ${HACK_TTS_MODEL:-tts-1}
-      LLM_PROVIDER: ${LLM_PROVIDER:-google}
+      FRONTEND_ADMIN_KEY: ${FRONTEND_ADMIN_KEY:-}
+      FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      ENABLE_LEGACY_DEMO: ${ENABLE_LEGACY_DEMO:-false}
+      ROOM_DB_PATH: /app/data/rooms.sqlite3
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
       GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://gemini-proxy.ilyuxa-chernov-04.workers.dev}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-}
+
+    volumes:
+      - room_data:/app/data
+
+volumes:
+  room_data:

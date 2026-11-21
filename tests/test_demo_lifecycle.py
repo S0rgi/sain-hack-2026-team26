@@ -133,7 +133,8 @@ class DemoLifecycleTests(unittest.TestCase):
         next_recipe = demo.checkout_demo(next_room)
         self.assertEqual(next_recipe["settings"]["alarm"]["at"], "2026-12-23T07:45:00+03:00")
         self.assertEqual(next_recipe["settings"]["climate"]["temperature_c"], 22)
-        self.assertEqual(demo.saved_preferences(next_room)["changes"]["light"]["brightness"], 45)
+        self.assertEqual(next_recipe["settings"]["light"]["brightness"], 20)
+        self.assertNotIn("light", demo.saved_preferences(next_room)["changes"])
 
         other_stay = {**later_stay, "user_id": "other-guest"}
         other_user = {**USER, "user_id": other_stay["user_id"]}
@@ -151,3 +152,19 @@ class DemoLifecycleTests(unittest.TestCase):
         self.assertFalse(demo.is_expired(room))
         expired_room = {**room, "expires_at": "2026-01-01T00:00:00+00:00"}
         self.assertTrue(demo.is_expired(expired_room))
+
+    def test_checkout_replay_preserves_required_ranges_and_next_alarm(self):
+        room, *_ = self.prepare_run("dev")
+        demo.remember_actions(room, [
+            {"device_id": "alarm", "values": {"at": None}},
+            {"device_id": "light", "values": {"brightness": 0, "color_temperature_k": 4500}},
+            {"device_id": "climate", "values": {"temperature_c": 25}},
+        ])
+        current = demo.checkout_demo(room)
+        self.assertIsNone(current["settings"]["alarm"]["at"])
+        self.assertEqual(current["settings"]["climate"]["temperature_c"], 25)
+        next_room, *_ = self.prepare_run("dev", saved=demo.saved_preferences(room))
+        following = demo.checkout_demo(next_room)["settings"]
+        self.assertEqual(following["alarm"]["at"], STAY["target_wake_at"])
+        self.assertEqual(following["climate"]["temperature_c"], 21.5)
+        self.assertEqual(following["light"], {"brightness": 20, "color_temperature_k": 2700})
