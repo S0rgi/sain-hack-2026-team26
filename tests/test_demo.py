@@ -26,7 +26,7 @@ class DemoTests(unittest.TestCase):
                 'expires_at': expires, 'scenario': [], 'history': [], 'user': USER,
                 'notes': [], 'track_ids': []}
 
-    @patch('app.main.create_demo')
+    @patch('app.demo.create_demo')
     def test_start_is_separate_and_time_is_validated(self, create):
         create.return_value = self.demo()
         result = main.start_demo()
@@ -37,9 +37,11 @@ class DemoTests(unittest.TestCase):
         self.assertEqual(main.room('2026-11-14T23:00:00+03:00').status_code, 400)
         self.assertEqual(create.call_count, 1)
 
-    @patch('app.main.create_demo')
+    @patch('app.demo.create_demo')
     def test_expired_demo_is_recreated(self, create):
         main.live_room.update(self.demo('2000-01-01T00:00:00+00:00'))
         create.return_value = self.demo()
-        self.assertEqual(main.room()['at'], STAY['check_in_at'])
+        self.assertEqual(main.room().status_code, 409)
+        create.assert_not_called()
+        self.assertEqual(main.start_demo()['at'], STAY['check_in_at'])
         self.assertEqual(create.call_count, 1)
