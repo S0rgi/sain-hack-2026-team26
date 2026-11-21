@@ -5,9 +5,10 @@ import json
 import logging
 import os
 import re
+import sqlite3
 from pathlib import Path
 from datetime import datetime, timezone
-from threading import Lock
+from threading import Event, Lock, Thread
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -19,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from app.case2 import build_scenario
 from app.llm import LLMClient, LLMError
+from app.product_api import build_router, cleanup_expired
 from app.room_client import RoomApiError, RoomClient, read_json
 
 app = FastAPI(title="Sain team26")
@@ -28,6 +30,35 @@ app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", 
 logger = logging.getLogger("uvicorn.error")
 room_lock = Lock()
 live_room = {}
+cleanup_stop = Event()
+cleanup_thread = None
+
+
+def cleanup_loop():
+    try:
+        interval = max(1, int(os.getenv("SESSION_CLEANUP_INTERVAL_SECONDS", "60")))
+    except ValueError:
+        interval = 60
+    while not cleanup_stop.wait(interval):
+        try:
+            cleanup_expired()
+        except (OSError, ValueError, sqlite3.Error):
+            logger.exception("Не удалось очистить истёкшие сеансы")
+
+
+@app.on_event("startup")
+def start_cleanup():
+    global cleanup_thread
+    cleanup_stop.clear()
+    cleanup_thread = Thread(target=cleanup_loop, name="session-cleanup", daemon=True)
+    cleanup_thread.start()
+
+
+@app.on_event("shutdown")
+def stop_cleanup():
+    cleanup_stop.set()
+    if cleanup_thread:
+        cleanup_thread.join(timeout=2)
 
 
 @app.get("/")
@@ -221,7 +252,7 @@ def create_demo(record_id=None):
     session = client.open_session(stay["record_id"], "stay", run_info["run_id"])
     client.set_scenario(session["session_id"], scenario)
     return {
-        "client": client, "session_id": session["session_id"], "at": stay["check_in_at"],
+        "client": client, "session_id": session["session_id"], "run_id": run_info["run_id"], "at": stay["check_in_at"],
         "check_in": stay["check_in_at"], "wake": stay["target_wake_at"],
         "expires_at": run_info["expires_at"], "scenario": scenario, "user": user,
         "notes": notes, "track_ids": track_ids, "tracks": tracks, "history": [],
@@ -299,5 +330,4 @@ def message(message: Message):
             return JSONResponse(status_code=502, content={"error": "Не удалось выполнить просьбу в симуляторе"})
 
 
-from app.product_api import build_router
 app.include_router(build_router(create_demo, execute_message))

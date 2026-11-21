@@ -48,8 +48,9 @@ class RoomClient:
             body["run_id"] = run_id
         return self._request("POST", "/room/session", body, attempts=3)
 
-    def devices(self):
-        return self._request("GET", "/room/devices")
+    def devices(self, run_id: str | None = None):
+        query = "?" + urlencode({"run_id": run_id}) if run_id is not None else ""
+        return self._request("GET", "/room/devices" + query)
 
     def set_scenario(self, session_id: str, steps: list):
         session = quote(session_id, safe="")

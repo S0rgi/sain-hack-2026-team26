@@ -8,6 +8,12 @@ from app.room_client import RoomClient
 
 class RoomClientTests(unittest.TestCase):
     @patch("app.room_client.urlopen")
+    def test_devices_uses_guest_run_id(self, urlopen):
+        urlopen.return_value.__enter__.return_value = io.BytesIO(b"{}")
+        RoomClient("https://example.test", "team-token").devices("run-123")
+        self.assertEqual(urlopen.call_args.args[0].full_url, "https://example.test/room/devices?run_id=run-123")
+
+    @patch("app.room_client.urlopen")
     def test_action_uses_run_token_and_contract(self, urlopen):
         response = io.BytesIO(b'{"ok": true}')
         urlopen.return_value.__enter__.return_value = response
