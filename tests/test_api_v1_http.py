@@ -143,7 +143,8 @@ class ApiV1HttpTests(unittest.TestCase):
         status, partial = self.api('/messages', 'POST', {'text': 'частично'}, ta)
         self.assertEqual((status, partial['outcome']), (200, 'refused'))
         self.assertEqual([x['device_id'] for x in partial['actions']], ['light'])
-        self.assertIn('Часть настроек', partial['reply'])
+        self.assertIn('Яркость света 30%', partial['reply'])
+        self.assertIn('Симулятор не подтвердил остальные настройки', partial['reply'])
         self.control(fail_device=None)
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             responses = list(pool.map(lambda text: self.api('/messages', 'POST', {'text': text}, ta), ['один', 'два']))
