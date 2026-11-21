@@ -33,7 +33,7 @@ class DemoLifecycleTests(unittest.TestCase):
         self.addCleanup(self.env.stop)
         self.notes_for = Mock(return_value=["Гость предпочитает тишину."])
 
-    def prepare_run(self, stage, stay=None, user=None, saved=None):
+    def prepare_run(self, stage, stay=None, user=None, saved=None, snapshot=None):
         info = {
             "stage": stage,
             "run_id": "run1",
@@ -44,6 +44,7 @@ class DemoLifecycleTests(unittest.TestCase):
         dataset = {"stays": [stay or STAY], "users": [user or USER], "tracks": TRACKS}
         client = Mock()
         client.open_session.return_value = {"session_id": "session-one"}
+        client.set_scenario.return_value = snapshot
         client.state.return_value = {"state": {"light": {"brightness": 20}}}
         with (
             patch("app.demo.read_json", side_effect=[info, {"dataset": dataset}]) as read_json,
@@ -92,6 +93,28 @@ class DemoLifecycleTests(unittest.TestCase):
         self.assertNotIn("run-secret", json.dumps(view))
         self.assertNotIn(USER["user_id"], json.dumps(view))
         self.assertNotIn("session-one", json.dumps(view))
+
+    def test_preparation_reuses_only_snapshot_for_right_session_and_time(self):
+        snapshot = {
+            "session_id": "session-one",
+            "at": "2026-11-22T17:00:00+00:00",
+            "state": {"light": {"brightness": 55}},
+        }
+        room, client, _, _ = self.prepare_run("dev", snapshot=snapshot)
+        view = demo.demo_view(room, use_confirmed_state=True)
+        self.assertEqual(view["state"]["light"]["brightness"], 55)
+        client.state.assert_not_called()
+        demo.demo_view(room)
+        client.state.assert_called_once_with("session-one", STAY["check_in_at"])
+
+        for invalid in ({**snapshot, "session_id": "different"},
+                        {**snapshot, "at": STAY["target_wake_at"]},
+                        {**snapshot, "at": "invalid"}):
+            with self.subTest(snapshot=invalid):
+                room, client, _, _ = self.prepare_run("dev", snapshot=invalid)
+                view = demo.demo_view(room, use_confirmed_state=True)
+                self.assertEqual(view["state"]["light"]["brightness"], 20)
+                client.state.assert_called_once_with("session-one", STAY["check_in_at"])
 
     def test_virtual_time_changes_only_after_successful_readback(self):
         room, client, _, _ = self.prepare_run("dev")

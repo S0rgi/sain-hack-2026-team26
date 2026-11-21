@@ -1,6 +1,7 @@
 """Интерактивный заезд в симуляторе и настройки для следующего визита."""
 
 import json
+import logging
 import os
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
@@ -10,6 +11,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.case2 import build_scenario
 from app.room_client import RoomApiError, RoomClient, read_json
+
+
+logger = logging.getLogger("uvicorn.error")
 
 
 HOME_FIELDS = {
@@ -49,7 +53,9 @@ def create_demo(notes_for, saved=None, *, record_id=None, stage=None):
         method="POST",
     )
     # A lost response may already have created the run.
+    started = perf_counter()
     run_info = read_json(request, timeout=30)
+    run_ms = (perf_counter() - started) * 1000
     if run_info["stage"] != stage:
         raise RoomApiError("API вернул прогон для другого этапа")
     if stage == "final":
@@ -60,7 +66,9 @@ def create_demo(notes_for, saved=None, *, record_id=None, stage=None):
         query = "?" + urlencode({"dataset_code": run_info["dataset_id"]})
         session_params = {"run_id": run_info["run_id"]}
     request = Request(base_url + "/case/2/getData" + query, headers={"Authorization": f"Bearer {token}"})
+    started = perf_counter()
     dataset = read_json(request, timeout=30, attempts=3)["dataset"]
+    dataset_ms = (perf_counter() - started) * 1000
     stay = next((stay for stay in dataset["stays"] if record_id is None or stay["record_id"] == record_id), None)
     if stay is None:
         raise ValueError("Заезд не найден в наборе")
@@ -98,9 +106,22 @@ def create_demo(notes_for, saved=None, *, record_id=None, stage=None):
     )
     room["scenario_ms"] = round((perf_counter() - started_at) * 1000, 2)
     client = RoomClient(base_url, token)
+    started = perf_counter()
     session = client.open_session(stay["record_id"], "stay", **session_params)
-    client.set_scenario(session["session_id"], scenario)
-    room.update(client=client, session_id=session["session_id"])
+    session_ms = (perf_counter() - started) * 1000
+    session_id = session["session_id"]
+    started = perf_counter()
+    snapshot = client.set_scenario(session_id, scenario)
+    upload_ms = (perf_counter() - started) * 1000
+    room.update(client=client, session_id=session_id)
+    if isinstance(snapshot, dict) and snapshot.get("session_id") == session_id and isinstance(snapshot.get("state"), dict):
+        try:
+            if datetime.fromisoformat(snapshot["at"]) == datetime.fromisoformat(room["check_in"]):
+                room["confirmed_state"] = snapshot["state"]
+        except (TypeError, ValueError, KeyError):
+            pass
+    logger.info("Room preparation stage=%s run_ms=%.0f dataset_ms=%.0f session_ms=%.0f upload_ms=%.0f scenario_ms=%.2f snapshot_reused=%s",
+                stage, run_ms, dataset_ms, session_ms, upload_ms, room["scenario_ms"], "confirmed_state" in room)
     return room
 
 
@@ -115,7 +136,7 @@ def _hotel_zone(room):
         return datetime.fromisoformat(room["wake"]).tzinfo
 
 
-def demo_view(room, at=None):
+def demo_view(room, at=None, *, use_confirmed_state=False):
     selected_at = room["at"]
     if at is not None:
         try:
@@ -128,8 +149,11 @@ def demo_view(room, at=None):
                 raise ValueError
         except ValueError:
             raise DemoTimeError("Выберите время между заселением и пробуждением с часовым поясом номера") from None
-    state = room["client"].state(room["session_id"], selected_at)["state"]
+    state = room.get("confirmed_state") if use_confirmed_state and at is None else None
+    if state is None:
+        state = room["client"].state(room["session_id"], selected_at)["state"]
     room["at"] = selected_at
+    room["confirmed_state"] = state
     view = {
         "state": state,
         "scenario": room["scenario"],

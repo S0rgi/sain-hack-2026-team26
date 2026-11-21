@@ -173,6 +173,35 @@ class Case2Tests(unittest.TestCase):
                 plan = plan_command(phrase, STATE, STAY["check_in_at"], [], USER, [], None)
                 self.assertEqual([(action.device_id, action.values) for action in plan.actions], [(device, values)])
 
+    def test_defense_phrases_work_locally_without_calling_model(self):
+        client = FakeRoom("", "")
+        client.state_data["curtains"]["position"] = 0
+        client.state_data["alarm"]["at"] = STAY["target_wake_at"]
+        virtual_time = "2026-11-12T23:00:00+03:00"
+
+        def plan(text):
+            return main.execute_message(
+                client, "demo", client.state("demo")["state"], virtual_time,
+                text, None, [], USER, [], [], action_at=virtual_time,
+            )
+
+        state, outcome, _, actions = plan("Сделай попрохладнее и приоткрой шторы")
+        self.assertEqual(outcome, "done")
+        self.assertEqual(state["climate"]["temperature_c"], 19.5)
+        self.assertEqual(state["curtains"]["position"], 25)
+        self.assertEqual([action["device_id"] for action in actions], ["climate", "curtains"])
+
+        with patch.object(client, "action", wraps=client.action) as apply:
+            state, outcome, _, _ = plan("Жарковато, и разбуди попозже")
+            self.assertEqual(outcome, "done")
+            self.assertEqual(state["climate"]["temperature_c"], 19)
+            self.assertEqual(state["alarm"]["at"], "2026-11-13T07:15:00+03:00")
+            self.assertTrue(all(call.args[-1] == virtual_time for call in apply.call_args_list))
+
+        state, outcome, _, _ = plan("Приглуши свет")
+        self.assertEqual(outcome, "done")
+        self.assertEqual(state["light"]["brightness"], 35)
+
     def test_local_refusal_makes_no_llm_or_room_calls(self):
         for phrase, reason in (("Что выпить, чтобы уснуть?", "medical"), ("Поставь 35 градусов", "invalid_value")):
             with self.subTest(phrase=phrase):

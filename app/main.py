@@ -267,7 +267,9 @@ def run(req: RunRequest, authorization: str | None = Header(default=None)):
 
 
 def create_product_session(record_id):
-    return demo.create_demo(notes_for, record_id=record_id, stage="dev")
+    room = demo.create_demo(notes_for, record_id=record_id, stage="dev")
+    room.pop("confirmed_state", None)
+    return room
 
 
 app.include_router(build_router(create_product_session, execute_message))
@@ -290,7 +292,7 @@ def demo_error(exc, message):
 
 def prepare_stay(saved=None):
     candidate = demo.create_demo(notes_for, saved=saved)
-    view = demo.demo_view(candidate)
+    view = demo.demo_view(candidate, use_confirmed_state=True)
     live_room.clear()
     live_room.update(candidate)
     return view
@@ -383,7 +385,9 @@ def message(message: Message):
             client = live_room["client"]
             session_id = live_room["session_id"]
             at = live_room["at"]
-            state = client.state(session_id, at)["state"]
+            state = live_room.pop("confirmed_state", None)
+            if state is None:
+                state = client.state(session_id, at)["state"]
             history = live_room["history"]
             llm = None if live_room["stage"] == "final" and configured_provider() != "sain" else LLMClient
             state, response_class, reply, actions = execute_message(
@@ -393,6 +397,8 @@ def message(message: Message):
             )
             history.extend([{"role": "user", "text": message.text}, {"role": "agent", "text": reply, "actions": actions}])
             demo.remember_actions(live_room, actions)
+            if response_class == "done":
+                live_room["confirmed_state"] = state
             return {"reply": reply, "state": state, "response_class": response_class, "actions": actions}
         except _SIMULATOR_ERRORS as exc:
             return demo_error(exc, "Не удалось обработать просьбу. Попробуйте ещё раз.")

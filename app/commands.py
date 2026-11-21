@@ -31,7 +31,9 @@ _RELATIVE = {
     "темнее": ("light", "brightness", -15, 0, 100),
     "тусклее": ("light", "brightness", -15, 0, 100),
     "теплее": ("climate", "temperature_c", 1.0, 16, 26),
+    "потеплее": ("climate", "temperature_c", 0.5, 16, 26),
     "прохладнее": ("climate", "temperature_c", -1.0, 16, 26),
+    "попрохладнее": ("climate", "temperature_c", -0.5, 16, 26),
     "холоднее": ("climate", "temperature_c", -1.0, 16, 26),
     "потише": ("sound", "volume", -10, 0, 100),
     "тише": ("sound", "volume", -10, 0, 100),
@@ -86,7 +88,7 @@ def _explicit_setting(command):
 def plan_compound_command(text, state, at, history, user, notes, tracks):
     if "\n" in text or _MEDICAL.search(normalize(text)):
         return None
-    segments = re.split(r"\s+(?:и|а также)\s+|\s*;\s*", normalize(text))
+    segments = re.split(r"(?:,\s*|\s+)(?:и|а также)\s+|\s*;\s*", normalize(text))
     if not 2 <= len(segments) <= 4:
         return None
     changes, rejected, targets = {}, [], []
@@ -166,6 +168,15 @@ def _previous_alarm(state, history):
 def _alarm(command, state, at, history):
     if re.fullmatch(r"(?:отмени|выключи|отключи|убери|сними|удали) (?:мой |утренний )?будильник", command):
         return done(alarm={"at": None})
+    approximate = re.fullmatch(r"(?:разбуди|буди)(?: меня)? (попозже|пораньше|позже|раньше)", command)
+    if approximate:
+        previous = _previous_alarm(state, history)
+        if previous is None:
+            return refuse("unsupported")
+        minutes = 15 if approximate[1] in {"попозже", "позже"} else -15
+        value = previous + timedelta(minutes=minutes)
+        return done(alarm={"at": value.isoformat(timespec="seconds")})
+
     shift = re.fullmatch(
         r"(?:(?:сдвинь|перенеси|передвинь|переставь) (?:будильник )?)?(?:еще )?"
         r"на (?:(\d{1,3}) ?(минут\w*|час\w*)|(полчаса|час|четверть часа|пятнадцать минут)) (раньше|позже)",
@@ -319,6 +330,8 @@ def plan_command(text, state, at, history, user, notes, tracks):
 
     if re.fullmatch(r"(?:открой|раздвинь|закрой|задвинь) (?:пожалуйста )?(?:шторы|занавески)(?: полностью)?", command):
         return done(curtains={"position": 100 if command.startswith(("открой", "раздвинь")) else 0})
+    if re.fullmatch(r"приоткрой (?:пожалуйста )?(?:шторы|занавески)", command):
+        return done(curtains={"position": max(25, state["curtains"]["position"])})
     curtain = re.fullmatch(
         r"(открой|приоткрой|раздвинь|закрой|задвинь) (?:шторы|занавески) (?:на |до )("
         + _NUMBER + r"|половину)\s*(?:%|процент\w*)?",
@@ -329,6 +342,8 @@ def plan_command(text, state, at, history, user, notes, tracks):
         return _setting("curtains", "position", target, 0, 100, True)
     if re.fullmatch(r"(?:выключи|погаси|отключи) свет", command):
         return done(light={"brightness": 0})
+    if re.fullmatch(r"приглуши свет", command):
+        return _relative_action("темнее", state)
     if re.fullmatch(r"(?:включи|зажги) свет", command):
         return done(light={"brightness": state["light"]["brightness"] or 50})
     if re.fullmatch(r"(?:выключи|отключи|убери|останови) (?:звук|музыку)", command):
@@ -351,6 +366,8 @@ def plan_command(text, state, at, history, user, notes, tracks):
     if re.fullmatch(r"еще(?: чуть-чуть| немного| чуть)?", command):
         if direction := _followup_direction(history):
             return _relative_action(direction, state, mild=True)
+    if command in {"жарковато", "мне жарковато", "здесь жарковато", "в номере жарковато"}:
+        return _relative_action("прохладнее", state, mild=True)
     if command in {"мне жарко", "здесь жарко", "в номере жарко"}:
         return _relative_action("прохладнее", state)
     if command in {"мне холодно", "здесь холодно", "в номере холодно", "я мерзну"}:
