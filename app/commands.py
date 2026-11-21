@@ -1,7 +1,8 @@
 """Детерминированные команды для однозначных просьб о настройках номера."""
 
 import re
-from datetime import datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.case2 import resolve_routine
 from app.llm import Action, Plan
@@ -39,6 +40,10 @@ _RELATIVE = {
     "тише": ("sound", "volume", -10, 0, 100),
     "громче": ("sound", "volume", 10, 0, 100),
 }
+_RELATIVE_DEVICES = {"свет": "light", "освещение": "light", "звук": "sound", "климат": "climate"}
+_LIGHT_WARMTH = {"теплее": -400, "потеплее": -250, "прохладнее": 400, "попрохладнее": 250, "холоднее": 400}
+_MILD_OFFSET = {"brightness": 10, "color_temperature_k": 250, "temperature_c": 0.5, "volume": 5}
+LIMIT_REPLY = "Настройка уже на пределе в запрошенном направлении."
 _NUMBERED = (
     (r"(?:(?:сделай|поставь|установи|выставь) )?(?:яркость(?: света)?|свет) (?:на |до |в )?(-?" + _NUMBER + r")\s*(?:%|процент\w*)?", "light", "brightness", 0, 100, True, "Яркость света", "%"),
     (r"(?:(?:поставь|установи|выставь|сделай) )?(?:(?:температуру(?: в номере)?|климат) (?:на |до |в )?)?(-?" + _NUMBER + r")\s*(?:°\s*[cс]?|градус\w*)", "climate", "temperature_c", 16, 26, False, "Температура", " °C"),
@@ -85,7 +90,7 @@ def _explicit_setting(command):
     return None
 
 
-def plan_compound_command(text, state, at, history, user, notes, tracks):
+def plan_compound_command(text, state, at, history, user, notes, tracks, *, hotel_timezone=None):
     if "\n" in text or _MEDICAL.search(normalize(text)):
         return None
     segments = re.split(r"(?:,\s*|\s+)(?:и|а также)\s+|\s*;\s*", normalize(text))
@@ -93,7 +98,7 @@ def plan_compound_command(text, state, at, history, user, notes, tracks):
         return None
     changes, rejected, targets = {}, [], []
     for segment in segments:
-        plan = plan_command(segment, state, at, history, user, notes, tracks)
+        plan = plan_command(segment, state, at, history, user, notes, tracks, hotel_timezone=hotel_timezone)
         if plan is None:
             return None
         if plan.outcome == "done" and len(plan.actions) == 1 and len(plan.actions[0].values) == 1:
@@ -104,6 +109,12 @@ def plan_compound_command(text, state, at, history, user, notes, tracks):
         elif plan.reason == "invalid_value" and (explicit := _explicit_setting(_plain(segment))):
             _, (device, field, low, high, _, label, unit) = explicit
             rejected.append(f"{label} может быть от {low} до {high}{unit}.")
+        elif plan.reason == "limit_reached":
+            rejected.append(LIMIT_REPLY)
+            continue
+        elif plan.reason == "unsupported" and _relative_match(_plain(segment)):
+            rejected.append("Не удалось определить настройку указанного устройства.")
+            continue
         else:
             return None
         targets.append((device, field))
@@ -112,29 +123,53 @@ def plan_compound_command(text, state, at, history, user, notes, tracks):
     return (done(**changes) if changes else refuse("invalid_value")), rejected
 
 
-def _relative_action(command, state, amount=None, mild=False):
-    device, field, delta, low, high = _RELATIVE[command]
+def _relative_action(setting, state, amount=None, mild=False):
+    device, field, delta, low, high = setting
     current = state[device][field]
+    if (delta > 0 and current >= high) or (delta < 0 and current <= low):
+        return refuse("limit_reached")
     step = abs(delta) if amount is None else _number(amount)
     if amount is None and mild:
-        step = {"light": 10, "climate": 0.5, "sound": 5}[device]
+        step = _MILD_OFFSET[field]
     target = current + (step if delta > 0 else -step)
     if amount is None:
         target = min(high, max(low, target))
-    return _setting(device, field, str(round(target, 3)), low, high, device != "climate")
+    target = round(target, 3)
+    if target == current:
+        return refuse("invalid_value")
+    return _setting(device, field, str(target), low, high, device != "climate")
 
 
 def _relative_match(command):
     return re.fullmatch(
-        r"(?:(?:сделай|сделайте|давай|в номере|здесь) )?(?:(?:свет|звук) )?"
-        r"(?:(чуть(?:-чуть)?|немного|еще(?: немного)?) )?"
-        r"(" + "|".join(_RELATIVE) + r")"
-        r"(?: на (" + _NUMBER + r")\s*(?:%|процент\w*|°(?:\s*[cс])?|градус\w*)?)?",
+        r"(?:(?:сделай|сделайте|давай|в номере|здесь) )?(?:(?P<device>" + "|".join(_RELATIVE_DEVICES) + r") )?"
+        r"(?:(?P<mild>чуть(?:-чуть)?|немного|еще(?: немного)?) )?"
+        r"(?P<direction>" + "|".join(_RELATIVE) + r")"
+        r"(?: на (?P<amount>" + _NUMBER + r")\s*(?P<unit>%|процент\w*|°(?:\s*[cс])?|градус\w*|[кk]|кельвин\w*)?)?",
         command,
     )
 
 
-def _followup_direction(history):
+def _relative_setting(match):
+    device = _RELATIVE_DEVICES.get(match["device"])
+    direction = match["direction"]
+    setting = _RELATIVE[direction]
+    if device == "light" and direction in _LIGHT_WARMTH:
+        setting = ("light", "color_temperature_k", _LIGHT_WARMTH[direction], 2200, 6500)
+    if device and device != setting[0]:
+        return None
+    unit = match["unit"]
+    if unit:
+        if unit.startswith(("%", "процент")) and setting[1] not in {"brightness", "volume"}:
+            return None
+        if unit.startswith(("°", "градус")) and setting[1] != "temperature_c":
+            return None
+        if unit.startswith(("к", "k")) and setting[1] != "color_temperature_k":
+            return None
+    return setting
+
+
+def _followup_setting(history):
     for i in range(len(history) - 1, 0, -1):
         answer = history[i]
         if answer.get("role") != "agent" or "actions" not in answer:
@@ -144,11 +179,10 @@ def _followup_direction(history):
             return None
         previous = history[i - 1]
         match = _relative_match(_plain(previous.get("text", ""))) if previous.get("role") == "user" else None
-        if match:
-            command = match[2]
-            device, field = _RELATIVE[command][:2]
+        if match and (setting := _relative_setting(match)):
+            device, field = setting[:2]
             if actions[0]["device_id"] == device and field in actions[0]["values"]:
-                return command
+                return setting
         return None
     return None
 
@@ -165,7 +199,31 @@ def _previous_alarm(state, history):
     return None
 
 
-def _alarm(command, state, at, history):
+def _alarm_zone(hotel_timezone, fallback):
+    if hotel_timezone:
+        try:
+            return ZoneInfo(hotel_timezone)
+        except (TypeError, ValueError, ZoneInfoNotFoundError):
+            pass
+    return fallback
+
+
+def _shift_alarm(previous, minutes, hotel_timezone):
+    if previous.tzinfo is None:
+        return refuse("invalid_value")
+    zone = _alarm_zone(hotel_timezone, previous.tzinfo)
+    new_time = (previous.astimezone(UTC) + timedelta(minutes=minutes)).astimezone(zone)
+    return done(alarm={"at": new_time.isoformat(timespec="seconds")})
+
+
+def _alarm_instants(date, clock, zone):
+    wall_time = datetime.combine(date, clock)
+    candidates = {wall_time.replace(tzinfo=zone, fold=fold).astimezone(UTC) for fold in (0, 1)}
+    return sorted(candidate for candidate in candidates
+                  if candidate.astimezone(zone).replace(tzinfo=None) == wall_time)
+
+
+def _alarm(command, state, at, history, hotel_timezone):
     if re.fullmatch(r"(?:отмени|выключи|отключи|убери|сними|удали) (?:мой |утренний )?будильник", command):
         return done(alarm={"at": None})
     approximate = re.fullmatch(r"(?:разбуди|буди)(?: меня)? (попозже|пораньше|позже|раньше)", command)
@@ -174,8 +232,7 @@ def _alarm(command, state, at, history):
         if previous is None:
             return refuse("unsupported")
         minutes = 15 if approximate[1] in {"попозже", "позже"} else -15
-        value = previous + timedelta(minutes=minutes)
-        return done(alarm={"at": value.isoformat(timespec="seconds")})
+        return _shift_alarm(previous, minutes, hotel_timezone)
 
     shift = re.fullmatch(
         r"(?:(?:сдвинь|перенеси|передвинь|переставь) (?:будильник )?)?(?:еще )?"
@@ -190,8 +247,7 @@ def _alarm(command, state, at, history):
         minutes = (int(number) * (60 if unit.startswith("час") else 1)) if number is not None else (
             {"полчаса": 30, "час": 60, "четверть часа": 15, "пятнадцать минут": 15}[words]
         )
-        value = previous + timedelta(minutes=minutes if direction == "позже" else -minutes)
-        return done(alarm={"at": value.isoformat(timespec="seconds")})
+        return _shift_alarm(previous, minutes if direction == "позже" else -minutes, hotel_timezone)
 
     absolute = re.fullmatch(
         r"(?:разбуди(?: меня)?|буди(?: меня)?|(?:поставь|установи|перенеси) (?:мне )?будильник)"
@@ -207,10 +263,23 @@ def _alarm(command, state, at, history):
     if hour > 23 or minute > 59:
         return refuse("invalid_value")
     instant = datetime.fromisoformat(at)
+    if instant.tzinfo is None:
+        return refuse("invalid_value")
+    zone = _alarm_zone(hotel_timezone, instant.tzinfo)
+    instant = instant.astimezone(zone)
+    clock = time(hour, minute)
     date = instant.date() + timedelta(days=day == "завтра")
-    value = datetime.combine(date, time(hour, minute), instant.tzinfo)
-    if day is None and value <= instant:
-        value += timedelta(days=1)
+    candidates = _alarm_instants(date, clock, zone)
+    if day is None:
+        future = [candidate for candidate in candidates if candidate > instant.astimezone(UTC)]
+        if not future and (candidates or clock <= instant.time()):
+            future = _alarm_instants(date + timedelta(days=1), clock, zone)
+        candidates = future
+    elif len(candidates) > 1:
+        candidates = [candidate for candidate in candidates if candidate > instant.astimezone(UTC)] or candidates
+    if not candidates:
+        return refuse("invalid_value")
+    value = candidates[0].astimezone(zone)
     return done(alarm={"at": value.isoformat(timespec="seconds")})
 
 
@@ -245,16 +314,16 @@ def _clock_components(clock):
     return hour, minute
 
 
-def _combined_turns(text, state, at, history, user, notes, tracks):
+def _combined_turns(text, state, at, history, user, notes, tracks, hotel_timezone):
     first, second = text.split("\n", maxsplit=1)
-    first_plan = plan_command(first, state, at, history, user, notes, tracks)
+    first_plan = plan_command(first, state, at, history, user, notes, tracks, hotel_timezone=hotel_timezone)
     if first_plan is None or first_plan.outcome != "done":
         return None
     preview = {device: values.copy() for device, values in state.items()}
     for action in first_plan.actions:
         preview[action.device_id].update(action.values)
     second = re.sub(r"^(?:нет[, ]+|лучше +)+", "", _plain(second))
-    second_plan = plan_command(second, preview, at, history, user, notes, tracks)
+    second_plan = plan_command(second, preview, at, history, user, notes, tracks, hotel_timezone=hotel_timezone)
     if second_plan is None or second_plan.outcome != "done":
         return second_plan
     first_devices = {action.device_id for action in first_plan.actions}
@@ -310,12 +379,12 @@ def fallback_plan(text, notes, tracks):
     return done(**changes) if changes else None
 
 
-def plan_command(text, state, at, history, user, notes, tracks):
+def plan_command(text, state, at, history, user, notes, tracks, *, hotel_timezone=None):
     """Возвращает None, если просьба требует интерпретации или контекста."""
     if _MEDICAL.search(normalize(text)):
         return refuse("medical")
     if text.count("\n") == 1:
-        return _combined_turns(text, state, at, history, user, notes, tracks)
+        return _combined_turns(text, state, at, history, user, notes, tracks, hotel_timezone)
     if "\n" in text:
         return None
     command = _plain(text)
@@ -343,7 +412,7 @@ def plan_command(text, state, at, history, user, notes, tracks):
     if re.fullmatch(r"(?:выключи|погаси|отключи) свет", command):
         return done(light={"brightness": 0})
     if re.fullmatch(r"приглуши свет", command):
-        return _relative_action("темнее", state)
+        return _relative_action(_RELATIVE["темнее"], state)
     if re.fullmatch(r"(?:включи|зажги) свет", command):
         return done(light={"brightness": state["light"]["brightness"] or 50})
     if re.fullmatch(r"(?:выключи|отключи|убери|останови) (?:звук|музыку)", command):
@@ -358,20 +427,21 @@ def plan_command(text, state, at, history, user, notes, tracks):
         changes.setdefault("light", {}).setdefault("brightness", 50)
         return done(**changes, dnd={"enabled": False}, alarm={"at": None})
 
-    alarm = _alarm(command, state, at, history)
+    alarm = _alarm(command, state, at, history, hotel_timezone)
     if alarm:
         return alarm
     if match := _relative_match(command):
-        return _relative_action(match[2], state, match[3], mild=bool(match[1]))
+        setting = _relative_setting(match)
+        return _relative_action(setting, state, match["amount"], mild=bool(match["mild"])) if setting else refuse("unsupported")
     if re.fullmatch(r"еще(?: чуть-чуть| немного| чуть)?", command):
-        if direction := _followup_direction(history):
-            return _relative_action(direction, state, mild=True)
+        if setting := _followup_setting(history):
+            return _relative_action(setting, state, mild=True)
     if command in {"жарковато", "мне жарковато", "здесь жарковато", "в номере жарковато"}:
-        return _relative_action("прохладнее", state, mild=True)
+        return _relative_action(_RELATIVE["прохладнее"], state, mild=True)
     if command in {"мне жарко", "здесь жарко", "в номере жарко"}:
-        return _relative_action("прохладнее", state)
+        return _relative_action(_RELATIVE["прохладнее"], state)
     if command in {"мне холодно", "здесь холодно", "в номере холодно", "я мерзну"}:
-        return _relative_action("теплее", state)
+        return _relative_action(_RELATIVE["теплее"], state)
 
     sound = re.fullmatch(r"(?:включи|поставь|запусти) (?:мой )?(?:звук|шум|музыку|трек)(?: (.+))?", command)
     if sound:

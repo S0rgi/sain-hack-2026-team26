@@ -12,14 +12,17 @@ from app import voice
 
 CONFIG = {
     "HACK_VOICE_ENABLED": "1",
+    "HACK_VOICE_ACCESS_KEY": "test-voice-access-key",
     "LLM_PROVIDER": "sain",
     "LLM_API_KEY": "example-test-token",
 }
 
 
-def incoming(content_type, *chunks, content_length=None):
+def incoming(content_type, *chunks, content_length=None, access_key=CONFIG["HACK_VOICE_ACCESS_KEY"]):
     source = iter(chunks)
     headers = [(b"content-type", content_type.encode("ascii"))]
+    if access_key is not None:
+        headers.append((b"x-voice-access-key", access_key.encode("ascii")))
     if content_length is not None:
         headers.append((b"content-length", str(content_length).encode("ascii")))
 
@@ -56,6 +59,8 @@ class VoiceTests(unittest.IsolatedAsyncioTestCase):
             {"LLM_BASE_URL": "https://bifrost.be-healthy.tech@other.example/v1"},
             {"LLM_BASE_URL": "http://bifrost.be-healthy.tech/v1"},
             {"LLM_API_KEY": ""},
+            {"HACK_VOICE_ACCESS_KEY": ""},
+            {"HACK_VOICE_ACCESS_KEY": "too-short"},
         )
         for config in bad_configs:
             with self.subTest(config=config), patch.dict("os.environ", config), self.assertRaises(HTTPException) as error:
@@ -63,6 +68,19 @@ class VoiceTests(unittest.IsolatedAsyncioTestCase):
                 await voice.transcribe(incoming("audio/webm", b"audio"))
             self.assertEqual(error.exception.status_code, 503)
         self.provider.assert_not_called()
+
+    async def test_missing_or_wrong_voice_key_cannot_reach_organizer(self):
+        with patch.dict("os.environ", {"ENABLE_LEGACY_DEMO": "false"}):
+            for access_key in (None, "wrong-test-voice-key", CONFIG["LLM_API_KEY"]):
+                for handler, media_type, payload in (
+                    (voice.transcribe, "audio/webm", b"recording"),
+                    (voice.speech, "application/json", b'{"text":"done"}'),
+                ):
+                    with self.subTest(handler=handler.__name__, missing=access_key is None), self.assertRaises(HTTPException) as error:
+                        await handler(incoming(media_type, payload, access_key=access_key))
+                    self.assertEqual(error.exception.status_code, 401)
+        self.provider.assert_not_called()
+        self.limiter.assert_not_called()
 
     async def test_transcription_sends_supported_audio_as_multipart(self):
         self.provider.return_value = upstream(
@@ -77,6 +95,7 @@ class VoiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.full_url, voice.ORGANIZER_PROXY + "/audio/transcriptions")
         self.assertEqual(request.method, "POST")
         self.assertEqual(request.get_header("Authorization"), "Bearer example-test-token")
+        self.assertNotIn("x-voice-access-key", {name.lower() for name, _ in request.header_items()})
         self.assertIn("multipart/form-data;", request.get_header("Content-type"))
         self.assertIn(b'name="model"\r\n\r\ngpt-transcribe', request.data)
         self.assertIn(b'name="file"; filename="request.webm"', request.data)

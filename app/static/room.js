@@ -15,6 +15,9 @@ let voiceAvailable = false;
 let demoAvailable = true;
 let recorder = null;
 let playback = null;
+let playbackRequest = null;
+let voiceAccessKey = "";
+let pendingVoiceAction = null;
 
 function showNotice(text, kind = "normal") {
   const notice = byId("notice");
@@ -229,6 +232,7 @@ function updateRoom(data, newStay = false) {
   room = data;
   byId("main").dataset.ready = "";
   if (newStay || reloaded) {
+    stopPlayback();
     timelineKey = "";
     byId("history").replaceChildren();
     addBubble(data.preferences_reused ? "Номер готов. Сохранённые настройки применены к новому заезду." : "Номер готов. Что хотите изменить?");
@@ -361,7 +365,7 @@ async function sendMessage(rawText) {
         listen.type = "button";
         listen.className = "listen";
         listen.textContent = "Прослушать";
-        listen.addEventListener("click", () => playReply(data.reply, listen));
+        listen.addEventListener("click", () => withVoiceAccess(() => playReply(data.reply, listen)));
         pending.append(listen);
       }
     } catch (error) {
@@ -409,22 +413,83 @@ byId("suggestions").addEventListener("click", event => {
   if (event.target.tagName === "BUTTON") sendMessage(event.target.textContent);
 });
 
+function withVoiceAccess(action) {
+  if (voiceAccessKey) return action();
+  const dialog = byId("voice-access-dialog");
+  if (dialog.open) return;
+  pendingVoiceAction = action;
+  dialog.returnValue = "";
+  dialog.showModal();
+}
+
+byId("voice-access-cancel").addEventListener("click", () => byId("voice-access-dialog").close("cancel"));
+byId("voice-access-dialog").addEventListener("close", event => {
+  const action = pendingVoiceAction;
+  pendingVoiceAction = null;
+  const input = byId("voice-access-key");
+  const key = input.value.trim();
+  input.value = "";
+  if (event.target.returnValue !== "unlock" || !key || !action) return;
+  voiceAccessKey = key;
+  action();
+});
+
+async function voiceRequest(path, options) {
+  const key = voiceAccessKey;
+  const response = await fetch(path, {
+    ...options,
+    mode: "same-origin",
+    redirect: "error",
+    headers: { ...options.headers, "X-Voice-Access-Key": key },
+  });
+  if (response.status === 401 && !options.signal?.aborted) {
+    if (voiceAccessKey === key) voiceAccessKey = "";
+    throw new Error("Ключ доступа к голосу отклонён. Попробуйте ввести его заново.");
+  }
+  return response;
+}
+
+function stopPlayback() {
+  playbackRequest?.abort();
+  playbackRequest = null;
+  playback?.();
+}
+
 async function playReply(text, button) {
+  if (recorder) {
+    showNotice("Закончите запись, чтобы прослушать ответ.");
+    return;
+  }
+  stopPlayback();
+  const controller = new AbortController();
+  playbackRequest = controller;
   button.disabled = true;
+  showNotice("");
   try {
-    if (playback) playback.pause();
-    const response = await fetch("/api/voice/speech", {
+    const response = await voiceRequest("/api/voice/speech", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
+      signal: controller.signal,
     });
+    if (controller.signal.aborted) return;
     if (!response.ok) throw new Error("Озвучивание недоступно. Ответ остался в чате.");
-    const url = URL.createObjectURL(await response.blob());
+    const blob = await response.blob();
+    if (controller.signal.aborted) return;
+    const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
-    playback = audio;
-    const release = () => URL.revokeObjectURL(url);
+    const release = () => {
+      if (playback !== stop) return;
+      playback = null;
+      URL.revokeObjectURL(url);
+    };
+    const stop = () => {
+      audio.pause();
+      release();
+    };
+    playback = stop;
     audio.addEventListener("ended", release, { once: true });
-    audio.addEventListener("pause", release, { once: true });
+    audio.addEventListener("error", release, { once: true });
     try {
       await audio.play();
     } catch (error) {
@@ -432,8 +497,9 @@ async function playReply(text, button) {
       throw error;
     }
   } catch (error) {
-    showNotice(error.message, "error");
+    if (!controller.signal.aborted) showNotice(error.message, "error");
   } finally {
+    if (playbackRequest === controller) playbackRequest = null;
     button.disabled = false;
   }
 }
@@ -445,6 +511,7 @@ async function toggleRecording() {
   }
   const button = byId("voice");
   await act(async () => {
+    stopPlayback();
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -466,7 +533,7 @@ async function toggleRecording() {
         const audio = new Blob(chunks, { type: recording.mimeType || chunks[0]?.type });
         act(async () => {
           if (!audio.size) throw new Error("Запись пуста. Попробуйте ещё раз.");
-          const response = await fetch("/api/voice/transcribe", { method: "POST", body: audio });
+          const response = await voiceRequest("/api/voice/transcribe", { method: "POST", body: audio });
           const data = await response.json().catch(() => null);
           if (!response.ok || !data?.text) throw new Error(data?.detail || "Не удалось распознать запись.");
           byId("message").value = data.text;
@@ -484,7 +551,10 @@ async function toggleRecording() {
   });
 }
 
-byId("voice").addEventListener("click", toggleRecording);
+byId("voice").addEventListener("click", () => {
+  if (recorder) return toggleRecording();
+  return withVoiceAccess(toggleRecording);
+});
 renderControls();
 Promise.allSettled([api("/api/config"), api("/api/room")]).then(([config, restored]) => {
   if (config.status === "fulfilled") {

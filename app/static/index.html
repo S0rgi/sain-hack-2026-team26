@@ -140,5 +140,18 @@
       </div>
     </form>
   </dialog>
+  <dialog id="voice-access-dialog" aria-labelledby="voice-access-heading">
+    <form method="dialog">
+      <h2 id="voice-access-heading">Доступ к голосу</h2>
+      <label class="voice-access-field" for="voice-access-key">
+        Ключ доступа
+        <input id="voice-access-key" type="password" minlength="16" autocomplete="off" required autofocus>
+      </label>
+      <div class="dialog-actions">
+        <button id="voice-access-cancel" class="button secondary" type="button">Отмена</button>
+        <button class="button primary" value="unlock">Продолжить</button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>

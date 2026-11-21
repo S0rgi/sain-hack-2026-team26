@@ -188,6 +188,7 @@ dialog::backdrop { background: #151a15a0; }
 dialog h2 { font-size: 32px; }
 dialog p { margin-top: 10px; color: var(--muted); }
 .dialog-actions { margin-top: 20px; display: flex; flex-wrap: wrap; justify-content: end; gap: 8px; }
+.voice-access-field { display: grid; gap: 6px; margin-top: 16px; font-size: 14px; }
 @media (min-width: 1100px) {
   .concierge { min-height: clamp(515px, 45vw, 630px); }
 }

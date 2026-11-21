@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from app import demo
 from app.case2 import build_scenario
-from app.commands import fallback_plan, normalize, plan_command, plan_compound_command
+from app.commands import LIMIT_REPLY, fallback_plan, normalize, plan_command, plan_compound_command
 from app.llm import LLMClient, LLMError, configured_provider, validate_plan
 from app.product_api import build_router
 from app.room_client import RoomApiError, RoomClient, read_json
@@ -145,9 +145,13 @@ def describe_actions(actions, track_catalog):
 
 
 def execute_message(client, session_id, state, at, text, llm, history, user, notes, track_ids,
-                    action_at=None, track_catalog=None):
-    compound = plan_compound_command(text, state, at, history, user, notes, track_catalog)
-    plan, rejected = compound if compound else (plan_command(text, state, at, history, user, notes, track_catalog), [])
+                    action_at=None, track_catalog=None, *, hotel_timezone=None):
+    compound = plan_compound_command(text, state, at, history, user, notes, track_catalog, hotel_timezone=hotel_timezone)
+    if compound:
+        plan, rejected = compound
+    else:
+        plan = plan_command(text, state, at, history, user, notes, track_catalog, hotel_timezone=hotel_timezone)
+        rejected = []
     try:
         if plan is None:
             if llm is None:
@@ -167,7 +171,8 @@ def execute_message(client, session_id, state, at, text, llm, history, user, not
             "medical": "С вопросами о лечении стоит обратиться к врачу. Могу приглушить свет, закрыть шторы или включить «Не беспокоить».",
             "out_of_scope": "Я могу помочь только с настройками номера.",
             "invalid_value": "Запрошенное значение выходит за пределы возможностей устройства.",
-            "unsupported": "Не удалось определить, как выполнить эту просьбу.",
+            "limit_reached": LIMIT_REPLY,
+            "unsupported": "Не удалось определить, как выполнить эту просьбу. Уточни настройку устройства.",
         }
         return state, "refused", " ".join(rejected) or replies[plan.reason], []
     completed = []
@@ -188,11 +193,12 @@ def process_request(client, request, llm, history, user, notes, track_ids, track
     session = client.open_session(request["record_id"], "request")
     state = session["initial_state"]
     utterances = request["utterances"]
+    hotel_timezone = request.get("hotel_timezone")
     replies = []
     groups = [utterances]
     if len(utterances) == 2:
         plans = [plan_command(item["text"], state, at=request["at"], history=history, user=user,
-                              notes=notes, tracks=tracks) for item in utterances]
+                              notes=notes, tracks=tracks, hotel_timezone=hotel_timezone) for item in utterances]
         if all(plan is not None and plan.outcome == "done" for plan in plans):
             first_devices, second_devices = ({action.device_id for action in plan.actions} for plan in plans)
             if first_devices.isdisjoint(second_devices) and not re.match(r"^(?:нет|лучше|вместо)\b", normalize(utterances[1]["text"])):
@@ -202,7 +208,7 @@ def process_request(client, request, llm, history, user, notes, track_ids, track
         at = group[-1]["at"]
         state, response_class, text, actions = execute_message(
             client, session["session_id"], state, at, combined_text,
-            llm, history, user, notes, track_ids, track_catalog=tracks,
+            llm, history, user, notes, track_ids, track_catalog=tracks, hotel_timezone=hotel_timezone,
         )
         replies.append({"role": "agent", "at": at, "text": text, "response_class": response_class})
         history.extend({"role": "user", "text": utterance["text"]} for utterance in group)
@@ -393,7 +399,7 @@ def message(message: Message):
             state, response_class, reply, actions = execute_message(
                 client, session_id, state, at, message.text, llm, history,
                 live_room["user"], live_room["notes"], live_room["track_ids"], at,
-                track_catalog=live_room["track_catalog"],
+                track_catalog=live_room["track_catalog"], hotel_timezone=live_room.get("hotel_timezone"),
             )
             history.extend([{"role": "user", "text": message.text}, {"role": "agent", "text": reply, "actions": actions}])
             demo.remember_actions(live_room, actions)

@@ -1,5 +1,6 @@
 """Дополнительные голосовые функции через прокси организаторов."""
 
+import hmac
 import json
 import os
 import re
@@ -61,15 +62,24 @@ def _model(variable, default):
     return model
 
 
+def _access_key():
+    key = os.getenv("HACK_VOICE_ACCESS_KEY", "")
+    return key if re.fullmatch(r"[!-~]{16,256}", key) else None
+
+
 def voice_enabled():
-    return bool(_proxy_key())
+    return bool(_proxy_key() and _access_key())
 
 
-def _require_voice():
-    key = _proxy_key()
-    if not key:
+def _require_voice(request: Request):
+    proxy_key = _proxy_key()
+    access_key = _access_key()
+    if not proxy_key or not access_key:
         raise HTTPException(503, "Голосовая функция недоступна. Напишите просьбу в чате.")
-    return key
+    supplied_key = request.headers.get("X-Voice-Access-Key", "")
+    if not hmac.compare_digest(supplied_key.encode("utf-8"), access_key.encode("ascii")):
+        raise HTTPException(401, "Требуется ключ доступа к голосу.")
+    return proxy_key
 
 
 async def _bounded_body(request, limit):
@@ -144,7 +154,7 @@ def _transcribe(key, model, audio, media_type):
 
 @router.post("/transcribe")
 async def transcribe(request: Request):
-    key = _require_voice()
+    key = _require_voice(request)
     model = _model("HACK_STT_MODEL", "gpt-transcribe")
     media_type = _content_type(request)
     if media_type not in AUDIO_FORMATS:
@@ -161,7 +171,7 @@ async def transcribe(request: Request):
 
 @router.post("/speech")
 async def speech(request: Request):
-    key = _require_voice()
+    key = _require_voice(request)
     model = _model("HACK_TTS_MODEL", "tts-1")
     if _content_type(request) != "application/json":
         raise HTTPException(415, "Для озвучивания нужен текст")

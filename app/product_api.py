@@ -238,7 +238,8 @@ def build_router(create_demo, execute_message):
                 state, outcome, reply, actions = execute_message(
                     client, data["session_id"], state, data["at"], body.text, LLMClient,
                     data["history"], data["user"], data["notes"], data["track_ids"], data["at"],
-                    track_catalog=data.get("track_catalog", data.get("tracks", [])))
+                    track_catalog=data.get("track_catalog", data.get("tracks", [])),
+                    hotel_timezone=data.get("hotel_timezone"))
             except (LLMError, RoomApiError, URLError, TimeoutError, OSError, ValueError, KeyError):
                 raise HTTPException(502, "Не удалось обработать просьбу")
             data["history"].extend([{"role": "user", "text": body.text},

@@ -207,7 +207,7 @@ mode light/sound/both, window_minutes 0-30, dnd enabled boolean.
 
 def validate_plan(plan, track_ids):
     if plan.outcome == "refused":
-        if plan.actions or plan.reason not in {"medical", "out_of_scope", "invalid_value", "unsupported"}:
+        if plan.actions or plan.reason not in {"medical", "out_of_scope", "invalid_value", "unsupported", "limit_reached"}:
             raise LLMInvalidResponse("Некорректный отказ модели")
         return
     if plan.outcome != "done" or plan.reason or not plan.actions:
