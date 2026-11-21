@@ -24,7 +24,8 @@ class ProductApiTests(unittest.TestCase):
                     "check_in": STAY["check_in_at"], "wake": STAY["target_wake_at"],
                     "expires_at": "2099-01-01T00:00:00+00:00", "scenario": [], "history": [],
                     "user": USER, "notes": [], "track_ids": ["track_01"]}
-        def execute(client, session_id, state, at, text, llm, history, user, notes, track_ids, action_at):
+        def execute(client, session_id, state, at, text, llm, history, user, notes, track_ids, action_at,
+                    track_catalog=None, hotel_timezone=None):
             state = client.action(session_id, "light", {"brightness": 30}, action_at)["state"]
             return state, "done", "Готово", [{"device_id": "light", "values": {"brightness": 30}}]
         router = product_api.build_router(create, execute)

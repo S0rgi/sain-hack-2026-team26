@@ -16,6 +16,7 @@ from urllib.error import HTTPError, URLError
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from app import demo
 from app.llm import Action, LLMClient, LLMError, Plan, validate_plan
 from app.room_client import RoomApiError, RoomClient
 
@@ -186,8 +187,10 @@ def build_router(create_demo, execute_message):
             token = secrets.token_urlsafe(32)
             save_session(hashlib.sha256(token.encode()).hexdigest(), data)
             return {"access_token": token, "token_type": "bearer", "room": {**public_info(data), "state": snapshot}}
+        except demo.DemoConfigurationError as exc:
+            raise HTTPException(503, str(exc)) from None
         except ValueError as exc:
-            raise HTTPException(400, str(exc))
+            raise HTTPException(400, str(exc)) from None
         except (HTTPError, URLError, RoomApiError, TimeoutError, OSError, KeyError, IndexError, StopIteration):
             raise HTTPException(502, "Не удалось создать демонстрационный сеанс")
 
@@ -213,7 +216,7 @@ def build_router(create_demo, execute_message):
             try:
                 catalog = room_client().devices(data["run_id"])
                 devices = catalog.get("devices", []) if isinstance(catalog, dict) else catalog
-                return {"devices": devices, "tracks": data.get("tracks", [])}
+                return {"devices": devices, "tracks": data.get("track_catalog", data.get("tracks", []))}
             except (RoomApiError, URLError, TimeoutError, OSError, KeyError):
                 raise HTTPException(502, "Не удалось получить каталог устройств")
 
@@ -263,8 +266,10 @@ def build_router(create_demo, execute_message):
             try:
                 state = client.state(data["session_id"], data["at"])["state"]
                 state, outcome, reply, actions = execute_message(
-                    client, data["session_id"], state, data["at"], body.text, LLMClient(),
-                    data["history"], data["user"], data["notes"], data["track_ids"], data["at"])
+                    client, data["session_id"], state, data["at"], body.text, LLMClient,
+                    data["history"], data["user"], data["notes"], data["track_ids"], data["at"],
+                    track_catalog=data.get("track_catalog", data.get("tracks", [])),
+                    hotel_timezone=data.get("hotel_timezone"))
             except (LLMError, RoomApiError, URLError, TimeoutError, OSError, ValueError, KeyError):
                 raise HTTPException(502, "Не удалось обработать просьбу")
             data["history"].extend([{"role": "user", "text": body.text},

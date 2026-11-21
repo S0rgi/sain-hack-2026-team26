@@ -69,7 +69,7 @@ class Handler(BaseHTTPRequestHandler):
             if route.path == "/runs":
                 run_id = str(uuid.uuid4())
                 RUNS.add(run_id)
-                return self.reply(200, {"run_id": run_id, "dataset_id": "dev",
+                return self.reply(200, {"run_id": run_id, "dataset_id": "dev", "stage": "dev",
                     "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=45)).isoformat()})
             if route.path == "/room/session":
                 if body.get("run_id") not in RUNS:
