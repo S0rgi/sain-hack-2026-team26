@@ -16,11 +16,11 @@ class ProductApiTests(unittest.TestCase):
                                           "FRONTEND_ADMIN_KEY": "admin-secret-long-enough"})
         self.env.start()
         self.room = FakeRoom('', '')
-        self.room.devices = lambda run_id=None: {"devices": [{"device_id": "light"}]}
+        self.room.devices = lambda run_id: {"devices": [{"device_id": "light"}]}
         self.created = []
         def create(record_id):
             self.created.append(record_id)
-            return {"client": self.room, "session_id": f"room-{len(self.created)}", "at": STAY["check_in_at"],
+            return {"client": self.room, "session_id": f"room-{len(self.created)}", "run_id": f"run-{len(self.created)}", "at": STAY["check_in_at"],
                     "check_in": STAY["check_in_at"], "wake": STAY["target_wake_at"],
                     "expires_at": "2099-01-01T00:00:00+00:00", "scenario": [], "history": [],
                     "user": USER, "notes": [], "track_ids": ["track_01"]}
@@ -103,3 +103,16 @@ class ProductApiTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as error:
             self.call('/room', 'GET')(authorization=auth)
         self.assertEqual(error.exception.status_code, 410)
+        self.assertEqual(product_api.cleanup_expired(), 1)
+        with self.assertRaises(HTTPException) as error:
+            self.call('/room', 'GET')(authorization=auth)
+        self.assertEqual(error.exception.status_code, 404)
+
+    def test_failed_time_change_does_not_update_cursor(self):
+        session = self.create()
+        auth = 'Bearer ' + session['access_token']
+        with patch.object(self.room, 'state', side_effect=OSError('offline')):
+            with self.assertRaises(HTTPException) as error:
+                self.call('/time', 'POST')(product_api.TimeSelection(at='2026-11-12T23:00:00+03:00'), authorization=auth)
+        self.assertEqual(error.exception.status_code, 502)
+        self.assertEqual(product_api.load_session(product_api.token_hash(auth))['at'], STAY['check_in_at'])

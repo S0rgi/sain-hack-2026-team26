@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import sqlite3
@@ -118,6 +119,33 @@ def save_session(key, data):
                      (key, json.dumps(data, ensure_ascii=False)))
 
 
+def cleanup_expired(now=None):
+    """Remove expired sessions under the same locks used by requests."""
+    now = now or datetime.now(timezone.utc)
+    with db_connect() as conn:
+        rows = conn.execute("SELECT token_hash, data FROM sessions").fetchall()
+    removed = 0
+    for key, raw in rows:
+        try:
+            if datetime.fromisoformat(json.loads(raw)["expires_at"]) > now:
+                continue
+        except (ValueError, KeyError, TypeError):
+            logging.getLogger("uvicorn.error").warning("Пропущен сеанс с некорректным сроком действия")
+            continue
+        with session_lock(key), db_connect() as conn:
+            row = conn.execute("SELECT data FROM sessions WHERE token_hash = ?", (key,)).fetchone()
+            if row is None:
+                continue
+            try:
+                expired = datetime.fromisoformat(json.loads(row[0])["expires_at"]) <= now
+            except (ValueError, KeyError, TypeError):
+                continue
+            if expired:
+                conn.execute("DELETE FROM sessions WHERE token_hash = ?", (key,))
+                removed += 1
+    return removed
+
+
 def room_client():
     base = os.getenv("HACK_API_URL", "").strip()
     token = os.getenv("HACK_TEAM_TOKEN", "").strip()
@@ -183,8 +211,10 @@ def build_router(create_demo, execute_message):
         key = token_hash(authorization)
         with session_lock(key):
             data = load_session(key)
+            if not data.get("run_id"):
+                raise HTTPException(409, "Сеанс создан до обновления API; создайте новый")
             try:
-                catalog = room_client().devices(run_id=data.get("run_id"))
+                catalog = room_client().devices(data["run_id"])
                 devices = catalog.get("devices", []) if isinstance(catalog, dict) else catalog
                 return {"devices": devices, "tracks": data.get("track_catalog", data.get("tracks", []))}
             except (RoomApiError, URLError, TimeoutError, OSError, KeyError):

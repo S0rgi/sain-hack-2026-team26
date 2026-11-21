@@ -6,7 +6,7 @@ from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
-_NIGHT = re.compile(r"\b(?:спать|сплю|спит|ночью|на ночь|для сна|перед сном|отбо\w*|засыпа\w*)\b")
+_NIGHT = re.compile(r"\b(?:спать|сплю|спит|ночью|на ночь|для сна|перед сном|отбо(?:й|я|е|ем|ю)|засыпа\w*)\b")
 _CELSIUS = re.compile(r"(?<!\d)(1[6-9]|2[0-6])(?:[.,](\d+))?\s*(?:°\s*c?|градус\w*)", re.I)
 _SLEEP_TEMP = {"cool": 17.5, "normal": 19.5, "warm": 21.5}
 _GENTLE = re.compile(r"\b(?:мягк\w* (?:будильник|пробуждение)|будит свет|разбудить светом|просыпа\w* от света)\b")
@@ -15,7 +15,7 @@ _HABIT = re.compile(r"\b(?:люб\w*|предпочита\w*|нрав\w*|выб�
 _NOTE_SOURCE = re.compile(r"^\[\S*\s+(?P<source>[^]]*)]\s*")
 _REPORTED = re.compile(
     r"\b(?:по словам|сказал\w*|говорил\w*|сообщил\w*|утвержда\w*|просил\w*|"
-    r"хоч\w*|хотел\w*|предпочита\w*|люб\w*|нрав\w*)\b"
+    r"хоч\w*|хотел\w*|предпочита\w*|люб(?:лю|ит|ят|им|ите|ил\w*)|нрав\w*)\b"
 )
 _OBSERVED = re.compile(r"\b(?:фактически|телеметри\w*|показани\w*|измер\w*|замер\w*|зафиксир\w*)\b")
 _AUDIO_CONTINUATION = re.compile(r"^(?:громкост\w*|таймер\w*)\b")
@@ -96,7 +96,7 @@ def resolve_routine(user, notes, tracks=None):
     blocked_tracks = {track for track, name in track_names.items() if name.search(dislikes)}
     sound_settings = {}
 
-    for _, sentence, audio_context in _sleep_evidence(notes):
+    for order, (_, sentence, audio_context) in enumerate(_sleep_evidence(notes)):
         if re.search(r"\b(?:не мерзля\w*|не любит тепло|не люблю тепло)\b", sentence):
             temperature = _SLEEP_TEMP["normal"]
         elif re.search(r"\bмерзля\w*\b", sentence):
@@ -140,14 +140,18 @@ def resolve_routine(user, notes, tracks=None):
             for field, pattern, limit in (("sound_volume", _VOLUME, 100), ("sound_timer_minutes", _TIMER, 1440)):
                 match = pattern.search(sentence)
                 if match and int(match[1]) <= limit and not _NEGATED.search(sentence[max(0, match.start() - 15):match.start()]):
-                    values[field] = int(match[1])
+                    values[field] = (order, int(match[1]))
             if values:
                 mentioned = [track for track, name in track_names.items() if name.search(audio_context)]
                 if len(mentioned) <= 1:
                     sound_settings.setdefault(next(iter(mentioned), None), {}).update(values)
 
     favorite = next((track for track in track_ids if track not in blocked_tracks), None)
-    settings = {**sound_settings.get(None, {}), **sound_settings.get(favorite, {})}
+    chosen_sound = sound_settings.get(None, {}).copy()
+    for field, setting in sound_settings.get(favorite, {}).items():
+        if field not in chosen_sound or setting[0] > chosen_sound[field][0]:
+            chosen_sound[field] = setting
+    settings = {field: value for field, (_, value) in chosen_sound.items()}
     return SleepRoutine(temperature, gentle, favorite, **settings)
 
 

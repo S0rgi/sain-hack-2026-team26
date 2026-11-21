@@ -4,9 +4,10 @@ import copy
 import logging
 import os
 import re
+import sqlite3
 from pathlib import Path
 from datetime import datetime
-from threading import Lock
+from threading import Event, Lock, Thread
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request
@@ -21,7 +22,7 @@ from app import demo
 from app.case2 import build_scenario
 from app.commands import LIMIT_REPLY, fallback_plan, normalize, plan_command, plan_compound_command
 from app.llm import LLMClient, LLMError, configured_provider, validate_plan
-from app.product_api import build_router
+from app.product_api import build_router, cleanup_expired
 from app.room_client import RoomApiError, RoomClient, read_json
 from app.voice import router as voice_router, voice_enabled
 
@@ -36,6 +37,35 @@ app.include_router(voice_router)
 logger = logging.getLogger("uvicorn.error")
 room_lock = Lock()
 live_room = {}
+cleanup_stop = Event()
+cleanup_thread = None
+
+
+def cleanup_loop():
+    try:
+        interval = max(1, int(os.getenv("SESSION_CLEANUP_INTERVAL_SECONDS", "60")))
+    except ValueError:
+        interval = 60
+    while not cleanup_stop.wait(interval):
+        try:
+            cleanup_expired()
+        except (OSError, ValueError, sqlite3.Error):
+            logger.exception("Не удалось очистить истёкшие сеансы")
+
+
+@app.on_event("startup")
+def start_cleanup():
+    global cleanup_thread
+    cleanup_stop.clear()
+    cleanup_thread = Thread(target=cleanup_loop, name="session-cleanup", daemon=True)
+    cleanup_thread.start()
+
+
+@app.on_event("shutdown")
+def stop_cleanup():
+    cleanup_stop.set()
+    if cleanup_thread:
+        cleanup_thread.join(timeout=2)
 
 
 @app.get("/")

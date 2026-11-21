@@ -57,6 +57,14 @@ class SleepPreferenceTests(unittest.TestCase):
         self.assertEqual(plan.outcome, "done")
         self.assertEqual(sound, {"track_id": "rain", "volume": 8, "timer_minutes": 15})
 
+    def test_observed_volume_has_priority_over_track_specific_wish(self):
+        notes = [
+            "[2026-11-19T23:00:00+03:00 hotel] При засыпании выставлена громкость 8%.",
+            "[2026-11-20T22:00:00+03:00 user] Перед сном хочу звук Дождь, громкость 12%, таймер 15 минут.",
+        ]
+        sound = resolve_routine(GUEST, notes, TRACKS).room_values()["sound"]
+        self.assertEqual(sound, {"track_id": "rain", "volume": 8, "timer_minutes": 15})
+
     def test_night_sound_learned_without_a_profile_and_schedule_limits_preserved(self):
         guest = {**GUEST, "sleep_preferences": {}}
         notes = [
