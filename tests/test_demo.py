@@ -8,6 +8,7 @@ from app.room_client import RoomClient
 from test_case2 import FakeRoom, STAY, USER
 
 
+@patch.dict('os.environ', {'ENABLE_LEGACY_DEMO': 'true'})
 class DemoTests(unittest.TestCase):
     def tearDown(self):
         main.live_room.clear()

@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, Header
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
@@ -21,6 +22,9 @@ from app.llm import LLMClient, LLMError
 from app.room_client import RoomApiError, RoomClient, read_json
 
 app = FastAPI(title="Sain team26")
+origins = [item.strip() for item in os.getenv("FRONTEND_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if item.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST"],
+                   allow_headers=["Authorization", "Content-Type", "X-Admin-Key"])
 logger = logging.getLogger("uvicorn.error")
 room_lock = Lock()
 live_room = {}
@@ -192,7 +196,7 @@ def run(req: RunRequest, authorization: str | None = Header(default=None)):
         return JSONResponse(status_code=502, content={"error": "Не удалось обработать набор или связаться с симулятором"})
 
 
-def create_demo():
+def create_demo(record_id=None):
     base_url = os.environ.get("HACK_API_URL")
     token = os.environ.get("HACK_TEAM_TOKEN", "").strip()
     if not base_url or not token:
@@ -205,10 +209,13 @@ def create_demo():
     with urlopen(request, timeout=30) as response:
         run_info = json.load(response)
     dataset = fetch_dataset(base_url, run_info["dataset_id"], f"Bearer {token}")
-    stay = dataset["stays"][0]
+    stay = next((item for item in dataset["stays"] if record_id is None or item["record_id"] == record_id), None)
+    if stay is None:
+        raise ValueError("Заезд не найден в dev-наборе")
     user = next(user for user in dataset["users"] if user["user_id"] == stay["user_id"])
     notes = notes_for(dataset, stay["user_id"])
-    track_ids = [track["track_id"] for track in dataset.get("tracks", [])]
+    tracks = dataset.get("tracks", [])
+    track_ids = [track["track_id"] for track in tracks]
     scenario = build_scenario(stay, user, notes)
     client = RoomClient(base_url, token)
     session = client.open_session(stay["record_id"], "stay", run_info["run_id"])
@@ -217,7 +224,7 @@ def create_demo():
         "client": client, "session_id": session["session_id"], "at": stay["check_in_at"],
         "check_in": stay["check_in_at"], "wake": stay["target_wake_at"],
         "expires_at": run_info["expires_at"], "scenario": scenario, "user": user,
-        "notes": notes, "track_ids": track_ids, "history": [],
+        "notes": notes, "track_ids": track_ids, "tracks": tracks, "history": [],
     }
 
 
@@ -242,6 +249,8 @@ def demo_view(at=None):
 
 @app.post("/api/demo")
 def start_demo():
+    if os.getenv("ENABLE_LEGACY_DEMO", "false").lower() != "true":
+        return JSONResponse(status_code=404, content={"error": "Демонстрационный интерфейс отключён"})
     with room_lock:
         try:
             return demo_view()
@@ -253,6 +262,8 @@ def start_demo():
 
 @app.get("/api/room")
 def room(at: str | None = None):
+    if os.getenv("ENABLE_LEGACY_DEMO", "false").lower() != "true":
+        return JSONResponse(status_code=404, content={"error": "Демонстрационный интерфейс отключён"})
     with room_lock:
         if not live_room:
             return JSONResponse(status_code=503, content={"error": "Сначала подготовьте демонстрационный номер"})
@@ -266,6 +277,8 @@ def room(at: str | None = None):
 
 @app.post("/api/message")
 def message(message: Message):
+    if os.getenv("ENABLE_LEGACY_DEMO", "false").lower() != "true":
+        return JSONResponse(status_code=404, content={"error": "Демонстрационный интерфейс отключён"})
     with room_lock:
         if not live_room:
             return JSONResponse(status_code=503, content={"error": "Сначала подготовьте демонстрационный номер"})
@@ -284,3 +297,7 @@ def message(message: Message):
             return {"reply": reply, "state": state}
         except (HTTPError, RoomApiError, LLMError, URLError, TimeoutError, OSError, ValueError, KeyError, IndexError, StopIteration):
             return JSONResponse(status_code=502, content={"error": "Не удалось выполнить просьбу в симуляторе"})
+
+
+from app.product_api import build_router
+app.include_router(build_router(create_demo, execute_message))

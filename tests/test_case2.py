@@ -133,7 +133,7 @@ class Case2Tests(unittest.TestCase):
         self.assertEqual(llm.histories[1][0]["text"], "Разбуди в семь")
         self.assertEqual(llm.histories[1][1]["actions"][0]["values"]["at"], "2026-11-13T07:00:00+03:00")
 
-    @patch.dict("os.environ", {"HACK_API_URL": "https://example.test"})
+    @patch.dict("os.environ", {"HACK_API_URL": "https://example.test", "ENABLE_LEGACY_DEMO": "true"})
     @patch("app.main.RoomClient", FakeRoom)
     @patch("app.main.LLMClient", FakeLLM)
     @patch("app.main.fetch_dataset")
