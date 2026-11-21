@@ -19,6 +19,32 @@ TRACKS = [{"track_id": "rain", "title": "Дождь"}, {"track_id": "sea", "titl
 
 
 class SleepPreferenceTests(unittest.TestCase):
+    def test_hotel_temperature_and_light_only_alarm_from_context(self):
+        guest = {**GUEST, "sleep_preferences": {}}
+        notes = [
+            "[2026-11-19T08:00:00+03:00 hotel] Заезд в отель. Гость пожаловался, что в номере холодно, и попросил 22 °C.",
+            "[2026-11-19T08:30:00+03:00 hotel] Утром попросил будить только светом: звонок пугает.",
+        ]
+        routine = resolve_routine(guest, notes, TRACKS)
+        self.assertEqual(routine.temperature, 21.5)
+        self.assertTrue(routine.gentle_alarm)
+
+    def test_night_named_track_without_explicit_play_verb(self):
+        guest = {**GUEST, "sleep_preferences": {}}
+        notes = ["[2026-11-19T08:00:00+03:00 hotel] Ночь в отеле. На ночь «Море» на громкости 10, таймер 30 минут."]
+        sound = resolve_routine(guest, notes, TRACKS).room_values()['sound']
+        self.assertEqual(sound, {'track_id': 'sea', 'volume': 10, 'timer_minutes': 30})
+
+    def test_failed_light_alarm_and_explicit_sound_off_are_not_preferences(self):
+        guest = {**GUEST, "sleep_preferences": {}}
+        notes = [
+            "[2026-11-19T08:00:00+03:00 hotel] Заезд в отель. На ночь выключили «Море».",
+            "[2026-11-19T08:10:00+03:00 hotel] Будильник светом не поднял гостя: проспал.",
+        ]
+        routine = resolve_routine(guest, notes, TRACKS)
+        self.assertFalse(routine.gentle_alarm)
+        self.assertIsNone(routine.favorite_track)
+
     def test_night_measurement_overrides_newer_guest_claim_in_stay_scenario(self):
         dataset = {
             "events": [{

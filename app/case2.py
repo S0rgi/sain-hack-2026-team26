@@ -6,10 +6,10 @@ from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
-_NIGHT = re.compile(r"\b(?:спать|сплю|спит|ночью|на ночь|для сна|перед сном|отбо(?:й|я|е|ем|ю)|засыпа\w*)\b")
+_NIGHT = re.compile(r"\b(?:спать|сплю|спит|ночь|ночью|на ночь|для сна|перед сном|отбо(?:й|я|е|ем|ю)|засыпа\w*)\b")
 _CELSIUS = re.compile(r"(?<!\d)(1[6-9]|2[0-6])(?:[.,](\d+))?\s*(?:°\s*c?|градус\w*)", re.I)
 _SLEEP_TEMP = {"cool": 17.5, "normal": 19.5, "warm": 21.5}
-_GENTLE = re.compile(r"\b(?:мягк\w* (?:будильник|пробуждение)|будит свет|разбудить светом|просыпа\w* от света)\b")
+_GENTLE = re.compile(r"\b(?:мягк\w* (?:будильник|пробуждение)|будит свет|разбудить светом|просыпа\w* от света|(?:будильник\w*|буди\w*|разбуд\w*)[^.!?]{0,45}\bтолько светом)\b")
 _NEGATED = re.compile(r"\b(?:нет|не|никогда|без)\b")
 _HABIT = re.compile(r"\b(?:люб\w*|предпочита\w*|нрав\w*|выбира\w*|привык\w*|обычно)\b")
 _NOTE_SOURCE = re.compile(r"^\[\S*\s+(?P<source>[^]]*)]\s*")
@@ -19,7 +19,7 @@ _REPORTED = re.compile(
 )
 _OBSERVED = re.compile(r"\b(?:фактически|телеметри\w*|показани\w*|измер\w*|замер\w*|зафиксир\w*)\b")
 _AUDIO_CONTINUATION = re.compile(r"^(?:громкост\w*|таймер\w*)\b")
-_VOLUME = re.compile(r"\bгромкост\w*\s*[:=–—]?\s*(?:на\s+)?(\d{1,3})\s*(?:%|процент\w*\b)")
+_VOLUME = re.compile(r"\bгромкост\w*\s*[:=–—]?\s*(?:на\s+)?(\d{1,3})(?!\d|[.,]\d)(?:\s*(?:%|процент\w*\b))?")
 _TIMER = re.compile(r"\bтаймер\w*\s*[:=–—]?\s*(?:на\s+)?(\d{1,4})\s*мин(?:ут\w*)?\b")
 
 
@@ -58,13 +58,14 @@ def _sleep_evidence(notes):
         metadata = _NOTE_SOURCE.match(note)
         body = note[metadata.end():] if metadata else note
         source = metadata["source"].strip() if metadata else ""
+        hotel_stay = source == "hotel" and bool(re.search(r"\b(?:заезд\w*|номер\w*|ночь\w*)\b", body))
         audio_context = ""
         for sentence in re.split(r"[!?;\n]+|\.(?=\s|$)", body):
             sentence = sentence.strip()
             if re.search(r"\b(?:раньше|прежде)\b", sentence) and not re.search(r"\b(?:сейчас|теперь)\b", sentence):
                 audio_context = ""
                 continue
-            if _NIGHT.search(sentence):
+            if _NIGHT.search(sentence) or (hotel_stay and _NIGHT.search(body) and re.search(r"\bснова\b", sentence)):
                 audio_context = sentence
             elif not _AUDIO_CONTINUATION.match(sentence):
                 audio_context = ""
@@ -72,7 +73,7 @@ def _sleep_evidence(notes):
             observed = source in {"hotel", "app"} and (
                 source == "hotel" or _OBSERVED.search(setting)
             ) and not _REPORTED.search(setting)
-            evidence.append((bool(observed), sentence, audio_context))
+            evidence.append((bool(observed), sentence, audio_context, hotel_stay))
     # notes_for supplies chronological order. Stable sorting applies observed settings
     # after reported wishes and keeps the newest evidence at each confidence level.
     return sorted(evidence, key=lambda entry: entry[0])
@@ -96,7 +97,7 @@ def resolve_routine(user, notes, tracks=None):
     blocked_tracks = {track for track, name in track_names.items() if name.search(dislikes)}
     sound_settings = {}
 
-    for order, (_, sentence, audio_context) in enumerate(_sleep_evidence(notes)):
+    for order, (_, sentence, audio_context, hotel_stay) in enumerate(_sleep_evidence(notes)):
         if re.search(r"\b(?:не мерзля\w*|не любит тепло|не люблю тепло)\b", sentence):
             temperature = _SLEEP_TEMP["normal"]
         elif re.search(r"\bмерзля\w*\b", sentence):
@@ -104,7 +105,8 @@ def resolve_routine(user, notes, tracks=None):
         if re.search(r"\b(?:люблю|любит|предпочита\w*) (?:спать в )?прохлад\w*\b", sentence):
             if not re.search(r"\bне (?:люблю|любит|предпочита\w*)\b", sentence):
                 temperature = _SLEEP_TEMP["cool"]
-        value = _CELSIUS.search(sentence) if _NIGHT.search(sentence) else None
+        room_temperature = hotel_stay and bool(re.search(r"\b(?:номер\w*|температур\w*|мерз\w*|холод\w*|жарк\w*|снова)\b", sentence))
+        value = _CELSIUS.search(sentence) if _NIGHT.search(sentence) or room_temperature else None
         if value and not _NEGATED.search(sentence[max(0, value.start() - 15):value.start()]):
             measured = float(".".join(number for number in value.groups() if number is not None))
             if measured < 18.5:
@@ -114,7 +116,7 @@ def resolve_routine(user, notes, tracks=None):
             else:
                 temperature = _SLEEP_TEMP["normal"]
 
-        if re.search(r"\b(?:не разбуд\w*|не сработал\w*)\b", sentence) and re.search(r"\bсвет\w*\b", sentence):
+        if re.search(r"\b(?:не разбуд\w*|не сработал\w*|не поднял\w*|проспал\w*)\b", sentence) and re.search(r"\bсвет\w*\b", sentence):
             gentle = False
         elif (_GENTLE.search(sentence) and not re.search(r"\bне (?:любит|люблю|хочет|хочу)\b", sentence)) or re.search(
             r"\b(?:не любит|не люблю|не использовать|без)\b[^.!?]{0,30}\bрезк\w*\b[^.!?]{0,30}\b(?:будильник\w*|звук\w*)\b",
@@ -129,9 +131,10 @@ def resolve_routine(user, notes, tracks=None):
             before = sentence[max(0, match.start() - 55):match.start()]
             if re.search(r"\b(?:не (?:люб\w*|нрав\w*|включ\w*|перенос\w*)|раздража\w*|без)\b", before):
                 blocked_tracks.add(track)
-            elif _HABIT.search(before) or (_NIGHT.search(sentence) and re.search(
-                r"\b(?:включ\w*|став\w*|слуш\w*|игра\w*|звуч\w*)\b", sentence
-            )):
+            elif _HABIT.search(before) or (_NIGHT.search(sentence) and not re.search(
+                r"\b(?:выключ\w*|отключ\w*|отказ\w*|не включ\w*)\b", before
+            ) and (re.search(r"\b(?:включ\w*|став\w*|слуш\w*|игра\w*|звуч\w*)\b", sentence)
+                   or re.search(r"\bна ночь\s*[«\"']", sentence))):
                 blocked_tracks.discard(track)
                 track_ids.insert(0, track)
 

@@ -190,7 +190,7 @@ def execute_message(client, session_id, state, at, text, llm, history, user, not
             plan = model.plan(text, state, at, history, user, request_notes(text, notes, track_catalog), track_ids)
         validate_plan(plan, track_ids)
     except LLMError as exc:
-        logger.info("Локальный разбор: %s", type(exc).__name__)
+        logger.info("Локальный разбор: %s", str(exc))
         plan = fallback_plan(text, notes, track_catalog)
         if plan is None:
             return state, "refused", "Не удалось разобрать просьбу. Укажи устройство и нужную настройку.", []

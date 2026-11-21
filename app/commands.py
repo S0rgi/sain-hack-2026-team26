@@ -224,6 +224,9 @@ def _alarm_instants(date, clock, zone):
 
 
 def _alarm(command, state, at, history, hotel_timezone):
+    if re.fullmatch(r"(?:дай|дайте) (?:мне )?поспать (?:еще )?полчаса", command):
+        previous = _previous_alarm(state, history)
+        return _shift_alarm(previous, 30, hotel_timezone) if previous else refuse("unsupported")
     if re.fullmatch(r"(?:отмени|выключи|отключи|убери|сними|удали) (?:мой |утренний )?будильник", command):
         return done(alarm={"at": None})
     approximate = re.fullmatch(r"(?:разбуди|буди)(?: меня)? (попозже|пораньше|позже|раньше)", command)
@@ -358,6 +361,13 @@ def _settings_in_notes(notes, context, tracks):
             values.setdefault("curtains", {})["position"] = 0
         if re.search(r"\bшторы (?:полностью )?открыт\w*\b(?!\s*(?:на|до)\b)", note):
             values.setdefault("curtains", {})["position"] = 100
+        if re.search(r"\b(?:полный свет|свет на полную)\b", note):
+            values.setdefault("light", {})["brightness"] = 100
+        if re.search(r"\b(?:открыть шторы|открытые шторы|шторы открыть)\b", note) and not re.search(r"\bне открыва\w*", note):
+            values.setdefault("curtains", {})["position"] = 100
+        color = re.search(r"\bсвет\w*[^.!?]{0,55}?\b(\d{4})\s*[kк]\b", note)
+        if color and 2200 <= int(color[1]) <= 6500:
+            values.setdefault("light", {})["color_temperature_k"] = int(color[1])
         if re.search(r"\bсвет (?:полностью )?(?:погашен|выключен)\b", note):
             values.setdefault("light", {})["brightness"] = 0
         for track in tracks or ():
@@ -383,6 +393,11 @@ def plan_command(text, state, at, history, user, notes, tracks, *, hotel_timezon
     """Возвращает None, если просьба требует интерпретации или контекста."""
     if _MEDICAL.search(normalize(text)):
         return refuse("medical")
+    if text.count("\n") == 1 and re.search(r"\bвключи\b[^\n]*\bпослушать\b", normalize(text.split("\n", 1)[0])) and re.search(r"\b(?:обычн\w*|любим\w*)\b.*\bдля сна\b", normalize(text.split("\n", 1)[1])):
+        track = resolve_routine(user, notes, tracks).favorite_track
+        return done(sound={"track_id": track, "volume": max(20, state["sound"]["volume"])}) if track else None
+    if text.count("\n") == 1 and re.search(r"\bсвет\w*\b", normalize(text.split("\n", 1)[0])) and re.fullmatch(r"приглуши(?: свет)?[.! ]*", normalize(text.split("\n", 1)[1])):
+        return _relative_action(_RELATIVE["темнее"], state)
     if text.count("\n") == 1:
         return _combined_turns(text, state, at, history, user, notes, tracks, hotel_timezone)
     if "\n" in text:
@@ -390,14 +405,14 @@ def plan_command(text, state, at, history, user, notes, tracks, *, hotel_timezon
     command = _plain(text)
     if _OUTSIDE_ROOM.fullmatch(command):
         return refuse("out_of_scope")
-    if re.fullmatch(r"(?:выключи|отключи|погаси) вс[её](?: в номере)?", command):
+    if re.match(r"^(?:выключи|отключи|погаси) все(?: в номере)?(?:$|[,!.])", command):
         return done(light={"brightness": 0}, sound={"volume": 0})
 
     if explicit := _explicit_setting(command):
         raw, (device, field, low, high, integral, _, _) = explicit
         return _setting(device, field, raw, low, high, integral)
 
-    if re.fullmatch(r"(?:открой|раздвинь|закрой|задвинь) (?:пожалуйста )?(?:шторы|занавески)(?: полностью)?", command):
+    if re.match(r"^(?:открой|раздвинь|закрой|задвинь) (?:пожалуйста )?(?:шторы|занавески)(?: полностью)?(?:$|[,!.])", command):
         return done(curtains={"position": 100 if command.startswith(("открой", "раздвинь")) else 0})
     if re.fullmatch(r"приоткрой (?:пожалуйста )?(?:шторы|занавески)", command):
         return done(curtains={"position": max(25, state["curtains"]["position"])})
@@ -419,7 +434,7 @@ def plan_command(text, state, at, history, user, notes, tracks, *, hotel_timezon
         return done(sound={"volume": 0})
     if re.fullmatch(r"(?:включи |отключи |выключи |сними )?(?:режим )?[«\"]?не беспокоить[»\"]?", command):
         return done(dnd={"enabled": not command.startswith(("отключи", "выключи", "сними"))})
-    if re.fullmatch(r"(?:я )?(?:ложусь(?: спать)?|иду спать)", command):
+    if re.fullmatch(r"(?:все,? )?(?:(?:я )?ложусь(?: спать)?|иду спать|сплю|отбой)", command):
         return done(**resolve_routine(user, notes, tracks).room_values())
     if re.fullmatch(r"(?:(?:я|уже) )?(?:проснул(?:ся|ась)|встал(?:а)?)", command):
         changes = _settings_in_notes(notes, r"\b(?:утром|подъем\w*|просыпа\w*|пробужден\w*)\b", tracks)
@@ -440,8 +455,17 @@ def plan_command(text, state, at, history, user, notes, tracks, *, hotel_timezon
         return _relative_action(_RELATIVE["прохладнее"], state, mild=True)
     if command in {"мне жарко", "здесь жарко", "в номере жарко"}:
         return _relative_action(_RELATIVE["прохладнее"], state)
-    if command in {"мне холодно", "здесь холодно", "в номере холодно", "я мерзну"}:
+    if command in {"холодно", "мне холодно", "здесь холодно", "в номере холодно", "я мерзну"}:
         return _relative_action(_RELATIVE["теплее"], state)
+    if re.fullmatch(r"(?:тут |здесь |в номере )?дышать нечем,? (?:убавь|сделай прохладнее)", command):
+        return _relative_action(_RELATIVE["прохладнее"], state)
+
+    requested_track = re.search(r"\b(?:включи|поставь|запусти) (?:мой |мою )?([а-яa-z]+)(?: еще раз)?$", command)
+    if requested_track:
+        name = requested_track[1]
+        matching = [item["track_id"] for item in (tracks or []) if name in normalize(item["title"]).split()]
+        if len(matching) == 1:
+            return done(sound={"track_id": matching[0], "volume": max(20, state["sound"]["volume"])})
 
     sound = re.fullmatch(r"(?:включи|поставь|запусти) (?:мой )?(?:звук|шум|музыку|трек)(?: (.+))?", command)
     if sound:
