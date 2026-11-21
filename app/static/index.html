@@ -3,70 +3,155 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Номер для отдыха</title>
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=Instrument+Serif&display=swap');
-    :root { font-family: 'DM Sans', sans-serif; color: #26362f; background: #f3f2eb; }
-    * { box-sizing: border-box; }
-    body { margin: 0; }
-    main { max-width: 1100px; margin: auto; padding: 44px 28px 80px; }
-    header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 48px; font-weight: 700; }
-    header span { font-weight: 400; color: #65766b; font-size: 14px; }
-    h1 { font: 400 clamp(42px, 6vw, 68px)/1.05 'Instrument Serif', Georgia, serif; margin: 0 0 12px; }
-    p { color: #66766d; line-height: 1.6; }
-    .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 36px; }
-    section { background: #fff; border-radius: 22px; padding: 28px; box-shadow: 0 8px 35px #384c3c0b; }
-    h2 { font-size: 18px; margin: 0 0 22px; }
-    .devices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .device { background: #f3f6f1; padding: 16px; border-radius: 14px; min-height: 78px; }
-    .device small { color: #718177; display: block; margin-bottom: 7px; }
-    .device strong { font-size: 16px; }
-    #history { min-height: 180px; max-height: 290px; overflow: auto; }
-    .bubble { background: #f1f5ef; border-radius: 14px; padding: 12px 15px; margin-bottom: 10px; line-height: 1.45; }
-    .guest { background: #dfeae0; margin-left: 36px; }
-    form { display: flex; gap: 8px; margin-top: 16px; }
-    input { min-width: 0; flex: 1; border: 1px solid #dce5dc; border-radius: 12px; padding: 14px; font: inherit; }
-    button { border: 0; border-radius: 12px; background: #385a46; color: white; padding: 0 19px; font: inherit; cursor: pointer; }
-    button:disabled { opacity: .5; }
-    .schedule { grid-column: 1/-1; }
-    .step { padding: 12px 0; border-bottom: 1px solid #edf0eb; display: flex; gap: 20px; }
-    .step:last-child { border: 0; }
-    .step time { color: #56725d; font-weight: 700; min-width: 48px; }
-    #status { color: #895339; }
-    .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 18px 0; }
-    .controls button { min-height: 46px; }
-    .controls input { flex: initial; }
-    @media(max-width:700px) { main { padding: 28px 18px; } header { margin-bottom: 36px; } .layout { grid-template-columns: 1fr; } .schedule { grid-column: auto; } }
-  </style>
+  <meta name="theme-color" content="#f6f4ed">
+  <title>Artemisis — номер для отдыха</title>
+  <link rel="stylesheet" href="/assets/room.css">
+  <script src="/assets/room.js" defer></script>
 </head>
 <body>
-<main>
-  <header>SAIN <span>Партнёрский отель сна</span></header>
-  <h1>Ваш номер готов к отдыху</h1>
-  <p>Настройки номера подстроены под ваш вечер и утро.</p>
-  <p id="status" role="status"></p>
-  <div class="controls"><button id="start-demo" type="button">Подготовить номер</button><label for="virtual-time">Время в номере</label><input id="virtual-time" type="datetime-local" step="60" disabled><button id="apply-time" type="button" disabled>Показать</button></div>
-  <div class="layout">
-    <section><h2>Сейчас в номере</h2><div class="devices" id="devices"></div></section>
-    <section><h2>Попросите номер</h2><div id="history"><div class="bubble">Здравствуйте! Что изменить в номере?</div></div><form id="form"><input id="text" placeholder="Например, сделай прохладнее" aria-label="Ваша просьба" required><button>Отправить</button></form></section>
-    <section class="schedule"><h2>Ваш вечер и утро</h2><div id="schedule"></div></section>
-  </div>
-</main>
-<script>
-const labels = {light:'Свет', climate:'Климат', sound:'Звук', curtains:'Шторы', alarm:'Будильник', dnd:'Не беспокоить'};
-const fields = {brightness:'Яркость', color_temperature_k:'Свет', temperature_c:'Температура', volume:'Громкость', timer_minutes:'Таймер, мин', track_id:'Звук', position:'Открытие', at:'Время', mode:'Режим', window_minutes:'Окно, мин', enabled:'Режим'};
-function value(key, val) { if (val === null) return 'выключен'; if (typeof val === 'boolean') return val ? 'включён' : 'выключен'; if (key === 'at') return String(val).slice(11,16); if (key === 'temperature_c') return val + ' °C'; if (['brightness','position','volume'].includes(key)) return val + '%'; return String(val); }
-function settings(data) { return Object.entries(data).map(([k,v]) => `${fields[k] || k}: ${value(k,v)}`).join(' · '); }
-function renderState(state) { const root = document.querySelector('#devices'); root.replaceChildren(); for (const [id,values] of Object.entries(state)) { const el = document.createElement('div'); el.className = 'device'; const title = document.createElement('small'); title.textContent = labels[id] || id; const desc = document.createElement('strong'); desc.textContent = settings(values); el.append(title,desc); root.append(el); } }
-function renderSchedule(steps) { const root = document.querySelector('#schedule'); root.replaceChildren(); for (const step of steps) { const row = document.createElement('div'); row.className = 'step'; const t = document.createElement('time'); t.textContent = step.at.slice(11,16); const desc = document.createElement('span'); desc.textContent = `${labels[step.device_id] || step.device_id} · ${settings(step.values)}`; row.append(t,desc); root.append(row); } }
-function bubble(text, guest=false) { const el = document.createElement('div'); el.className = 'bubble' + (guest ? ' guest' : ''); el.textContent = text; const history = document.querySelector('#history'); history.append(el); history.scrollTop = history.scrollHeight; }
-let roomOffset = '';
-function renderRoom(data) { renderState(data.state); renderSchedule(data.scenario); const input = document.querySelector('#virtual-time'); roomOffset = data.at.slice(-6); input.value = data.at.slice(0,16); input.min = data.check_in.slice(0,16); input.max = data.wake.slice(0,16); input.disabled = false; document.querySelector('#apply-time').disabled = false; document.querySelector('#status').textContent = 'Время указано в часовом поясе номера (' + roomOffset + ').'; }
-async function load(url='/api/room', options={}) { try { const response = await fetch(url, options); const data = await response.json(); if (!response.ok) throw Error(data.error); renderRoom(data); } catch (error) { document.querySelector('#status').textContent = error.message; } }
-document.querySelector('#start-demo').addEventListener('click', async event => { event.target.disabled = true; try { await load('/api/demo', {method:'POST'}); } finally { event.target.disabled = false; } });
-document.querySelector('#apply-time').addEventListener('click', () => { const input = document.querySelector('#virtual-time'); if (!input.reportValidity()) return; load('/api/room?at=' + encodeURIComponent(input.value + ':00' + roomOffset)); });
-document.querySelector('#form').addEventListener('submit', async event => { event.preventDefault(); const input = document.querySelector('#text'); const text = input.value.trim(); if (!text) return; input.value = ''; bubble(text,true); const button = event.target.querySelector('button'); button.disabled = true; try { const response = await fetch('/api/message',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})}); const data = await response.json(); if (!response.ok) throw Error(data.error); bubble(data.reply); renderState(data.state); } catch(error) { bubble(error.message); } finally { button.disabled = false; input.focus(); } });
-load();
-</script>
+  <a class="skip" href="#main">К содержимому</a>
+  <header class="topbar shell">
+    <a class="wordmark" href="#main" aria-label="Artemisis, к началу">
+      <span class="brand-mark" aria-hidden="true"></span>Artemisis
+    </a>
+    <nav aria-label="Разделы заезда">
+      <a href="#room">Номер</a>
+      <a href="#routine">План сна</a>
+      <a href="#home-recipe">После заезда</a>
+    </nav>
+    <span class="connection" id="connection" data-state="idle">До заселения</span>
+  </header>
+
+  <main id="main" class="shell">
+    <section class="intro" aria-labelledby="title">
+      <div>
+        <h1 id="title">Номер, который<br> знает гостя<span class="period">.</span></h1>
+        <p>От заселения до подъёма свет, климат и тишина подстроятся под ваш ритм сна.</p>
+      </div>
+      <div class="intro-actions">
+        <button class="button primary" id="check-in" type="button">Заселиться <span aria-hidden="true">↗</span></button>
+        <button class="button secondary" id="reset" type="button" hidden>Сбросить заезд</button>
+        <span id="build-time" class="short-note" hidden></span>
+      </div>
+    </section>
+
+    <p class="notice" id="notice" role="status" hidden></p>
+
+    <div class="room-layout" id="room">
+      <section class="room-panel" aria-labelledby="room-heading">
+        <div class="room-visual" id="room-visual" data-phase="arrival">
+          <img class="room-photo" src="/assets/room.webp" alt="" width="1400" height="934" fetchpriority="high">
+          <div class="room-shade"></div>
+          <div class="room-caption">
+            <div>
+              <h2 id="room-heading">Ваш номер</h2>
+              <p id="phase-caption">Сценарий появится после заселения</p>
+            </div>
+            <div class="room-clock" id="room-clock" hidden>
+              <time id="clock"></time><span>в номере</span>
+            </div>
+          </div>
+        </div>
+        <div class="phase-controls" aria-label="Виртуальное время в номере">
+          <div id="phases" class="phases">
+            <button type="button" data-phase="evening" disabled><span>Вечер</span><time></time></button>
+            <button type="button" data-phase="night" disabled><span>Ночь</span><time></time></button>
+            <button type="button" data-phase="dawn" disabled><span>Рассвет</span><time></time></button>
+            <button type="button" data-phase="wake" disabled><span>Подъём</span><time></time></button>
+          </div>
+          <details id="custom-time" hidden>
+            <summary>Выбрать точное время</summary>
+            <form id="time-form">
+              <label for="virtual-time">Местное время номера</label>
+              <div>
+                <input type="datetime-local" id="virtual-time" step="1" required>
+                <button class="button secondary" id="apply-time">Показать</button>
+              </div>
+            </form>
+          </details>
+        </div>
+        <div class="room-settings" aria-labelledby="devices-heading">
+          <h3 id="devices-heading">Сейчас в номере</h3>
+          <p class="empty-note" id="devices-empty">Здесь появится состояние устройств.</p>
+          <dl class="devices" id="devices" hidden></dl>
+        </div>
+      </section>
+
+      <section class="concierge" aria-labelledby="concierge-heading">
+        <header>
+          <span class="concierge-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <div>
+            <h2 id="concierge-heading">Консьерж</h2>
+            <p>Управление номером</p>
+          </div>
+        </header>
+        <div id="history" class="history" role="log" aria-label="Переписка с консьержем" aria-live="polite" aria-relevant="additions text">
+          <p class="bubble">После заселения попросите меня изменить свет, климат, шторы или будильник.</p>
+        </div>
+        <div class="chat-tools">
+          <div class="suggestions" id="suggestions" aria-label="Примеры просьб">
+            <button type="button" disabled>Сделай прохладнее</button>
+            <button type="button" disabled>Приоткрой шторы</button>
+            <button type="button" disabled>Приглуши свет</button>
+          </div>
+          <form id="message-form" class="composer">
+            <label class="sr-only" for="message">Ваша просьба</label>
+            <input id="message" placeholder="Что изменить в номере?" autocomplete="off" maxlength="1000" required disabled>
+            <button id="voice" class="voice" type="button" hidden>Голос</button>
+            <button id="send" aria-label="Отправить просьбу" disabled><span aria-hidden="true">↑</span></button>
+          </form>
+        </div>
+      </section>
+    </div>
+
+    <section class="routine" id="routine" aria-labelledby="routine-heading">
+      <header class="section-title">
+        <h2 id="routine-heading">Ваш план сна</h2>
+        <p id="routine-caption">Вечер, ночь и утро по вашим привычкам.</p>
+      </header>
+      <p id="routine-empty" class="empty-note">План появится, когда номер будет готов.</p>
+      <ol id="timeline" class="timeline" hidden></ol>
+    </section>
+
+    <section class="home-recipe" id="home-recipe" aria-labelledby="home-heading">
+      <div class="home-header">
+        <div>
+          <h2 id="home-heading">Продолжение дома</h2>
+          <p id="home-caption">На выезде соберём настройки номера, которые можно повторить дома.</p>
+        </div>
+        <button class="button secondary" type="button" id="checkout" disabled>Завершить заезд</button>
+      </div>
+      <dl id="recipe" class="recipe" hidden></dl>
+      <div id="return-actions" class="return-actions" hidden>
+        <button class="button primary" id="stay-again" type="button">Повторить заезд с настройками <span aria-hidden="true">↗</span></button>
+        <span class="short-note" id="return-note"></span>
+      </div>
+    </section>
+  </main>
+  <footer class="footer shell"><span>Artemisis</span><span id="stage-label">Сеанс симулятора</span></footer>
+
+  <dialog id="reset-dialog" aria-labelledby="reset-heading">
+    <form method="dialog">
+      <h2 id="reset-heading">Начать заезд заново?</h2>
+      <p>У нового номера будут исходные настройки гостя. История этого диалога очистится.</p>
+      <div class="dialog-actions">
+        <button class="button secondary" value="cancel" autofocus>Отмена</button>
+        <button class="button primary" value="reset">Сбросить заезд</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="voice-access-dialog" aria-labelledby="voice-access-heading">
+    <form method="dialog">
+      <h2 id="voice-access-heading">Доступ к голосу</h2>
+      <label class="voice-access-field" for="voice-access-key">
+        Ключ доступа
+        <input id="voice-access-key" type="password" minlength="16" autocomplete="off" required autofocus>
+      </label>
+      <div class="dialog-actions">
+        <button id="voice-access-cancel" class="button secondary" type="button">Отмена</button>
+        <button class="button primary" value="unlock">Продолжить</button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>
