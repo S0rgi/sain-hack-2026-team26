@@ -68,6 +68,10 @@ class ProductApiTests(unittest.TestCase):
         self.assertIn('/api/v1/actions', schema['paths'])
         self.assertIn('/api/v1/catalog', schema['paths'])
 
+    @patch.dict(os.environ, {}, clear=True)
+    def test_default_demo_config_is_enabled_for_final(self):
+        self.assertEqual(main.client_config(), {'stage': 'final', 'voice': False, 'demo': True})
+
     @patch.dict(os.environ, {'ENABLE_LEGACY_DEMO': 'false', 'FRONTEND_ADMIN_KEY': ''})
     def test_unconfigured_product_api_and_legacy_demo_fail_closed(self):
         self.assertEqual(main.start_demo().status_code, 404)

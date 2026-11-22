@@ -33,7 +33,7 @@ class DemoTimeError(ValueError):
 
 
 def demo_stage():
-    stage = os.getenv("HACK_RUN_STAGE", "dev").strip().lower()
+    stage = (os.getenv("HACK_RUN_STAGE") or "final").strip().lower()
     if stage not in {"dev", "final"}:
         raise DemoConfigurationError("HACK_RUN_STAGE должен быть dev или final")
     return stage

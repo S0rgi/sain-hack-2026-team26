@@ -335,7 +335,7 @@ def prepare_stay(saved=None):
 
 
 def legacy_demo_enabled():
-    return os.getenv("ENABLE_LEGACY_DEMO", "false").lower() == "true"
+    return os.getenv("ENABLE_LEGACY_DEMO", "true").lower() == "true"
 
 
 def disabled_demo():

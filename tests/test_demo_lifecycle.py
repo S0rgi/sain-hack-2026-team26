@@ -33,7 +33,7 @@ class DemoLifecycleTests(unittest.TestCase):
         self.addCleanup(self.env.stop)
         self.notes_for = Mock(return_value=["Гость предпочитает тишину."])
 
-    def prepare_run(self, stage, stay=None, user=None, saved=None, snapshot=None):
+    def prepare_run(self, stage, stay=None, user=None, saved=None, snapshot=None, use_default=False):
         info = {
             "stage": stage,
             "run_id": "run1",
@@ -47,13 +47,15 @@ class DemoLifecycleTests(unittest.TestCase):
         client.set_scenario.return_value = snapshot
         client.state.return_value = {"state": {"light": {"brightness": 20}}}
         with (
+            patch.dict("os.environ", {} if use_default else {"HACK_RUN_STAGE": stage}),
             patch("app.demo.read_json", side_effect=[info, {"dataset": dataset}]) as read_json,
             patch("app.demo.RoomClient", return_value=client) as room_client,
         ):
             room = demo.create_demo(self.notes_for, saved)
         return room, client, room_client, read_json
 
-    def test_dev_defaults_to_team_token_and_explicit_run_id(self):
+    @patch.dict("os.environ", {"HACK_RUN_STAGE": "dev"})
+    def test_dev_uses_team_token_and_explicit_run_id(self):
         room, client, room_client, read_json = self.prepare_run("dev")
         create, fetch = [request.args[0] for request in read_json.call_args_list]
         self.assertEqual(create.method, "POST")
@@ -65,9 +67,8 @@ class DemoLifecycleTests(unittest.TestCase):
         client.open_session.assert_called_once_with(STAY["record_id"], "stay", run_id="run1")
         self.assertEqual(room["stage"], "dev")
 
-    @patch.dict("os.environ", {"HACK_RUN_STAGE": "final"})
-    def test_final_uses_scoped_token_no_dataset_code_and_one_stay_session(self):
-        room, client, room_client, read_json = self.prepare_run("final")
+    def test_default_final_uses_scoped_token_no_dataset_code_and_one_stay_session(self):
+        room, client, room_client, read_json = self.prepare_run("final", use_default=True)
         create, fetch = [request.args[0] for request in read_json.call_args_list]
         self.assertEqual(json.loads(create.data), {"case": 2, "stage": "final"})
         self.assertEqual(create.get_header("Authorization"), "Bearer team-secret")
@@ -93,6 +94,10 @@ class DemoLifecycleTests(unittest.TestCase):
         self.assertNotIn("run-secret", json.dumps(view))
         self.assertNotIn(USER["user_id"], json.dumps(view))
         self.assertNotIn("session-one", json.dumps(view))
+
+    @patch.dict("os.environ", {"HACK_RUN_STAGE": ""})
+    def test_empty_stage_uses_final(self):
+        self.assertEqual(demo.demo_stage(), "final")
 
     def test_preparation_reuses_only_snapshot_for_right_session_and_time(self):
         snapshot = {
