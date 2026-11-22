@@ -1,5 +1,11 @@
 # Artemisis — номер, который знает гостя
 
+
+
+[![Presentation](https://img.shields.io/badge/Презентация-PDF-2ea44f?style=for-the-badge&logo=adobeacrobatreader&logoColor=white)](final-pitch.pdf)
+[![Live Demo](https://img.shields.io/badge/Стенд-team26.hack.be--healthy.tech-blue?style=for-the-badge)](https://team26.hack.be-healthy.tech)
+
+
 Веб-демо ведёт гостя от заселения до выезда. Оно строит план сна по профилю, заметкам и времени отеля, показывает состояние устройств в течение ночи и выполняет просьбы в той же сессии симулятора. На выезде гость получает настройки для дома и может перенести подходящие из них в следующий заезд.
 
 ## Локальный запуск
